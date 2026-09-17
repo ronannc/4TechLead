@@ -23,6 +23,14 @@ it('manages one on one templates and sessions with search and pagination', funct
     $templateId = $templateResponse->json('data.id');
 
     $this->actingAs(User::factory()->create(), 'sanctum')
+        ->putJson("/api/v1/one-on-one-templates/{$templateId}", [
+            'title' => '1:1 evolução técnica atualizada',
+            'questions' => ['Qual evolução ficou mais evidente?'],
+        ])
+        ->assertOk()
+        ->assertJsonPath('data.title', '1:1 evolução técnica atualizada');
+
+    $this->actingAs(User::factory()->create(), 'sanctum')
         ->postJson('/api/v1/one-on-one-sessions', [
             'person_id' => $person->id,
             'one_on_one_template_id' => $templateId,
@@ -40,14 +48,18 @@ it('manages one on one templates and sessions with search and pagination', funct
         ->assertJsonPath('data.person_id', $person->id)
         ->assertJsonPath('data.status', 'completed')
         ->assertJsonPath('data.source_document_id', $templateId)
-        ->assertJsonPath('data.document_snapshot.title', '1:1 evolução técnica')
-        ->assertJsonPath('data.document_snapshot.questions.0', 'Qual foi sua principal evolução?');
+        ->assertJsonPath('data.document_snapshot.title', '1:1 evolução técnica atualizada')
+        ->assertJsonPath('data.document_snapshot.questions.0', 'Qual evolução ficou mais evidente?');
 
     $this->actingAs(User::factory()->create(), 'sanctum')
         ->getJson("/api/v1/one-on-one-sessions?filters[person_id]={$person->id}&search=incidentes&per_page=5")
         ->assertOk()
         ->assertJsonCount(1, 'data')
         ->assertJsonPath('data.0.title', '1:1 Grace - autonomia');
+
+    $this->actingAs(User::factory()->create(), 'sanctum')
+        ->deleteJson("/api/v1/one-on-one-templates/{$templateId}")
+        ->assertNoContent();
 });
 
 it('lets tech leads register points for future one on ones', function () {
@@ -111,6 +123,12 @@ it('manages development plans and trackable items', function () {
         ->assertOk()
         ->assertJsonCount(1, 'data')
         ->assertJsonPath('data.0.items.0.title', 'Conduzir desenho técnico');
+
+    $this->actingAs(User::factory()->create(), 'sanctum')
+        ->deleteJson("/api/v1/development-plans/{$planId}")
+        ->assertNoContent();
+
+    expect(DevelopmentPlan::query()->find($planId))->toBeNull();
 });
 
 it('suggests one on one questions, pdi actions, and kpis for a person', function () {
