@@ -308,6 +308,15 @@ final class ClickUpWebhookIngestService
         $historyAfter = $this->historyValue(Arr::get($historyItem, 'after'), $historyField);
         $taskStatus = $this->statusValue(Arr::get($task, 'status'));
         $taskAssignees = $this->taskAssignees($task);
+
+        // ClickUp automation payloads can expose task users at the webhook
+        // root instead of inside payload. Only users explicitly marked as
+        // assigned are task assignees; watchers, owner and creator must not
+        // be treated as the actor who performed the change.
+        if ($taskAssignees === []) {
+            $taskAssignees = $this->assignedWebhookUsers(Arr::get($payload, 'users', []));
+        }
+
         $taskTags = $this->tagNames(Arr::get($task, 'tags', []));
         $assigneeChange = in_array($historyField, ['assignee', 'assignees'], true);
         $tagChange = $historyField === 'tag';
@@ -657,6 +666,25 @@ final class ClickUpWebhookIngestService
         }
 
         return $assignees;
+    }
+
+    /**
+     * @param  mixed  $users
+     * @return array<int, array{external_code: string, id: string, name?: string}>
+     */
+    protected function assignedWebhookUsers(mixed $users): array
+    {
+        if (! is_array($users)) {
+            return [];
+        }
+
+        return $this->taskAssignees([
+            'users' => array_values(array_filter(
+                $users,
+                static fn (mixed $user): bool => is_array($user)
+                    && Arr::get($user, 'type') === 'assigned',
+            )),
+        ]);
     }
 
     /**
