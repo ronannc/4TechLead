@@ -22,7 +22,11 @@ class IntegrationSystemResource extends JsonResource
             'description' => $this->description,
             'token_prefix' => $this->token_prefix,
             'has_webhook_token' => $this->token_hash !== null,
-            'has_provider_api_token' => $this->provider_api_token !== null,
+            // The list/detail response only needs to know whether a token exists.
+            // Reading the cast attribute would decrypt it and can make the whole
+            // integrations list fail if a legacy value was encrypted with a
+            // different APP_KEY. The token itself is never exposed here.
+            'has_provider_api_token' => $this->getRawOriginal('provider_api_token') !== null,
             'webhook_token' => $this->when($this->webhook_token !== null, $this->webhook_token),
             'webhook_url' => $this->when(
                 in_array($this->provider, ['github', 'github-actions', 'clickup'], true),

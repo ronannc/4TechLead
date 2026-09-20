@@ -102,6 +102,22 @@ it('stores a clickup provider api token encrypted without exposing it in respons
         ]);
 });
 
+it('lists integrations even when a legacy provider token cannot be decrypted', function (): void {
+    Sanctum::actingAs(User::factory()->create());
+
+    $integration = IntegrationSystem::factory()->create([
+        'provider' => 'clickup',
+    ]);
+
+    DB::table('integration_systems')
+        ->where('id', $integration->id)
+        ->update(['provider_api_token' => 'legacy-ciphertext']);
+
+    $this->getJson('/api/v1/integration-systems?per_page=100')
+        ->assertOk()
+        ->assertJsonPath('data.0.has_provider_api_token', true);
+});
+
 it('rejects provider api tokens for integrations other than clickup', function (): void {
     Sanctum::actingAs(User::factory()->create());
 
