@@ -12,7 +12,11 @@ final class IntegrationWebhookEventListResource extends JsonResource
      */
     public function toArray(Request $request): array
     {
-        $taskAssignees = $this->normalized_payload['task_assignees'] ?? [];
+        $taskAssignees = $this->task_assignees;
+
+        if (is_string($taskAssignees)) {
+            $taskAssignees = json_decode($taskAssignees, true);
+        }
 
         return [
             'id' => $this->id,

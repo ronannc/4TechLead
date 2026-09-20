@@ -25,11 +25,11 @@ final class IntegrationWebhookEventIndexService implements IndexServiceContract
                 'enrichment_status',
                 'failure_reason',
                 'payload_size_bytes',
-                'normalized_payload',
                 'received_at',
                 'created_at',
                 'updated_at',
             ])
+            ->selectRaw("normalized_payload->'task_assignees' as task_assignees")
             ->with(['integrationSystem', 'person'])
             ->withCount('deliveryMetrics')
             ->filter($params->filters)
