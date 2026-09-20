@@ -1,0 +1,79 @@
+<?php
+
+use App\Http\Controllers\Api\V1\AuthController;
+use App\Http\Controllers\Api\V1\AuthenticatedPersonController;
+use App\Http\Controllers\Api\V1\ClickUpWebhookController;
+use App\Http\Controllers\Api\V1\DailyMeetingController;
+use App\Http\Controllers\Api\V1\DailyMeetingEntryController;
+use App\Http\Controllers\Api\V1\DeliveryKpiController;
+use App\Http\Controllers\Api\V1\DevelopmentPlanController;
+use App\Http\Controllers\Api\V1\DevelopmentPlanItemController;
+use App\Http\Controllers\Api\V1\ExternalNotificationController;
+use App\Http\Controllers\Api\V1\ExternalNotificationWebhookController;
+use App\Http\Controllers\Api\V1\GitHubWebhookController;
+use App\Http\Controllers\Api\V1\IntegrationSystemController;
+use App\Http\Controllers\Api\V1\IntegrationWebhookEventController;
+use App\Http\Controllers\Api\V1\OneOnOneSessionController;
+use App\Http\Controllers\Api\V1\OneOnOneTemplateController;
+use App\Http\Controllers\Api\V1\PersonController;
+use App\Http\Controllers\Api\V1\PersonDeliveryMetricController;
+use App\Http\Controllers\Api\V1\PersonExternalIdentityController;
+use App\Http\Controllers\Api\V1\PersonGrowthSuggestionController;
+use App\Http\Controllers\Api\V1\PersonInvitationController;
+use App\Http\Controllers\Api\V1\PersonOneOnOneNoteController;
+use App\Http\Controllers\Api\V1\TeamController;
+use Illuminate\Support\Facades\Route;
+
+Route::prefix('auth')->group(function (): void {
+    Route::post('register', [AuthController::class, 'register']);
+    Route::post('login', [AuthController::class, 'login']);
+    Route::post('accept-person-invitation', [AuthController::class, 'acceptPersonInvitation']);
+
+    Route::middleware('auth:sanctum')->group(function (): void {
+        Route::post('logout', [AuthController::class, 'logout']);
+        Route::get('me', [AuthController::class, 'me']);
+    });
+});
+
+Route::post('clickup-webhooks', ClickUpWebhookController::class)->middleware('throttle:60,1');
+Route::post('github-webhooks', GitHubWebhookController::class)->middleware('throttle:60,1');
+Route::post('notification-webhooks/{integrationSystem}', ExternalNotificationWebhookController::class)->middleware('throttle:60,1');
+
+Route::middleware('auth:sanctum')->group(function (): void {
+    Route::get('me/person', [AuthenticatedPersonController::class, 'show']);
+    Route::get('me/development-plans', [AuthenticatedPersonController::class, 'developmentPlans']);
+    Route::apiResource('teams', TeamController::class);
+    Route::apiResource('people', PersonController::class);
+    Route::post('people/{person}/invitation', [PersonInvitationController::class, 'store']);
+    Route::post(
+        'integration-systems/{integrationSystem}/regenerate-token',
+        [IntegrationSystemController::class, 'regenerateToken']
+    );
+    Route::delete(
+        'integration-systems/{integrationSystem}/token',
+        [IntegrationSystemController::class, 'revokeToken']
+    );
+    Route::apiResource('integration-systems', IntegrationSystemController::class);
+    Route::apiResource('integration-webhook-events', IntegrationWebhookEventController::class)
+        ->only(['index', 'show', 'destroy']);
+    Route::post(
+        'integration-webhook-events/{integrationWebhookEvent}/enrich',
+        [IntegrationWebhookEventController::class, 'enrich']
+    );
+    Route::apiResource('person-external-identities', PersonExternalIdentityController::class);
+    Route::apiResource('person-delivery-metrics', PersonDeliveryMetricController::class)->only(['index', 'show']);
+    Route::get('delivery-kpis', DeliveryKpiController::class);
+    Route::apiResource('notifications', ExternalNotificationController::class)
+        ->parameters(['notifications' => 'notification'])
+        ->only(['index', 'show']);
+    Route::get('people/{person}/growth-suggestions', PersonGrowthSuggestionController::class);
+    Route::apiResource('one-on-one-templates', OneOnOneTemplateController::class);
+    Route::apiResource('one-on-one-sessions', OneOnOneSessionController::class);
+    Route::apiResource('person-one-on-one-notes', PersonOneOnOneNoteController::class);
+    Route::apiResource('development-plans', DevelopmentPlanController::class);
+    Route::apiResource('development-plan-items', DevelopmentPlanItemController::class);
+    // Daily history is append-only: only index/show/store are routed (see DailyMeetingPolicy /
+    // DailyMeetingEntryPolicy, which also deny update/delete at the authorization layer).
+    Route::apiResource('daily-meetings', DailyMeetingController::class)->only(['index', 'show', 'store']);
+    Route::apiResource('daily-meeting-entries', DailyMeetingEntryController::class)->only(['index', 'show']);
+});

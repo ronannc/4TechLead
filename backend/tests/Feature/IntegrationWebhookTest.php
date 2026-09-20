@@ -1,0 +1,1520 @@
+<?php
+
+use App\Enums\DeliveryStage;
+use App\Models\DeliveryCase;
+use App\Models\ExternalNotification;
+use App\Models\IntegrationSystem;
+use App\Models\IntegrationWebhookEvent;
+use App\Models\Person;
+use App\Models\PersonDeliveryMetric;
+use App\Models\PersonExternalIdentity;
+use App\Models\Tenant;
+use App\Models\User;
+use Illuminate\Routing\Middleware\ThrottleRequests;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Http;
+use Illuminate\Testing\Fluent\AssertableJson;
+use Laravel\Sanctum\Sanctum;
+
+beforeEach(function (): void {
+    $this->withoutMiddleware(ThrottleRequests::class);
+});
+
+it('creates an integration system with a one time webhook token', function (): void {
+    Sanctum::actingAs(User::factory()->create());
+
+    $response = $this->postJson('/api/v1/integration-systems', [
+        'name' => 'GitHub Produto',
+        'provider' => 'github',
+        'description' => 'PRs e CI do time de produto.',
+    ]);
+
+    $response
+        ->assertCreated()
+        ->assertJsonPath('data.name', 'GitHub Produto')
+        ->assertJsonPath('data.provider', 'github')
+        ->assertJsonPath('data.active', true)
+        ->assertJsonStructure(['data' => ['id', 'token_prefix', 'webhook_token']]);
+
+    $token = $response->json('data.webhook_token');
+    $webhookUrl = $response->json('data.webhook_url');
+    expect($token)->toBeString()->not->toBe('');
+    expect($webhookUrl)
+        ->toBeString()
+        ->toEndWith('/api/v1/github-webhooks')
+        ->not->toContain($token);
+
+    $integration = IntegrationSystem::query()->firstOrFail();
+    $storedSecret = DB::table('integration_systems')->where('id', $integration->id)->value('webhook_secret');
+
+    expect($integration->token_hash)->toBe(hash('sha256', $token));
+    expect($integration->webhook_secret)->toBe($token);
+    expect($integration->token_hash)->not->toBe($token);
+    expect($storedSecret)->not->toBe($token);
+});
+
+it('returns the public clickup webhook url when creating a clickup integration', function (): void {
+    Sanctum::actingAs(User::factory()->create());
+
+    $response = $this->postJson('/api/v1/integration-systems', [
+        'name' => 'ClickUp Produto',
+        'provider' => 'clickup',
+        'description' => 'Tarefas e status do time de produto.',
+    ]);
+
+    $response
+        ->assertCreated()
+        ->assertJsonPath('data.provider', 'clickup')
+        ->assertJsonStructure(['data' => ['webhook_token', 'webhook_url']]);
+
+    $token = $response->json('data.webhook_token');
+
+    expect($response->json('data.webhook_url'))
+        ->toBeString()
+        ->toEndWith('/api/v1/clickup-webhooks')
+        ->not->toContain($token);
+});
+
+it('stores a clickup provider api token encrypted without exposing it in responses', function (): void {
+    Sanctum::actingAs(User::factory()->create());
+
+    $response = $this->postJson('/api/v1/integration-systems', [
+        'name' => 'ClickUp Produto',
+        'provider' => 'clickup',
+        'provider_api_token' => 'pk_clickup_api_token',
+    ]);
+
+    $response
+        ->assertCreated()
+        ->assertJsonPath('data.provider', 'clickup')
+        ->assertJsonPath('data.has_provider_api_token', true)
+        ->assertJsonMissing(['provider_api_token' => 'pk_clickup_api_token']);
+
+    $integration = IntegrationSystem::query()->firstOrFail();
+    $storedToken = DB::table('integration_systems')->where('id', $integration->id)->value('provider_api_token');
+
+    expect($integration->provider_api_token)->toBe('pk_clickup_api_token')
+        ->and($storedToken)->not->toBe('pk_clickup_api_token')
+        ->and($integration->toArray())->not->toHaveKeys([
+            'token_hash',
+            'webhook_secret',
+            'provider_api_token',
+        ]);
+});
+
+it('rejects provider api tokens for integrations other than clickup', function (): void {
+    Sanctum::actingAs(User::factory()->create());
+
+    $this->postJson('/api/v1/integration-systems', [
+        'name' => 'GitHub Produto',
+        'provider' => 'github',
+        'provider_api_token' => 'must-not-be-stored',
+    ])->assertUnprocessable()
+        ->assertJsonValidationErrors('provider_api_token');
+});
+
+it('regenerates an integration webhook token and invalidates the old token', function (): void {
+    Sanctum::actingAs(User::factory()->create());
+
+    $oldToken = 'old-github-secret-token';
+    $integration = IntegrationSystem::factory()->create([
+        'token_hash' => hash('sha256', $oldToken),
+        'token_prefix' => substr($oldToken, 0, 8),
+    ]);
+
+    $response = $this->postJson("/api/v1/integration-systems/{$integration->id}/regenerate-token")
+        ->assertOk()
+        ->assertJsonPath('data.id', $integration->id)
+        ->assertJsonStructure(['data' => ['token_prefix', 'webhook_token']]);
+
+    $newToken = $response->json('data.webhook_token');
+
+    expect($newToken)
+        ->toBeString()
+        ->not->toBe('')
+        ->not->toBe($oldToken);
+
+    $integration->refresh();
+
+    expect($integration->token_hash)->toBe(hash('sha256', $newToken));
+    expect($integration->webhook_secret)->toBe($newToken);
+    expect($integration->token_prefix)->toBe(substr($newToken, 0, 8));
+
+    $payload = githubNativePullRequestPayload();
+    $rawBody = json_encode($payload, JSON_THROW_ON_ERROR);
+
+    $this->call(
+        'POST',
+        '/api/v1/github-webhooks',
+        server: [
+            'CONTENT_TYPE' => 'application/json',
+            'HTTP_ACCEPT' => 'application/json',
+            'HTTP_X_GITHUB_DELIVERY' => 'old-token-delivery',
+            'HTTP_X_GITHUB_EVENT' => 'pull_request',
+            'HTTP_X_HUB_SIGNATURE_256' => 'sha256='.hash_hmac('sha256', $rawBody, $oldToken),
+        ],
+        content: $rawBody,
+    )->assertForbidden();
+
+    $this->call(
+        'POST',
+        '/api/v1/github-webhooks',
+        server: [
+            'CONTENT_TYPE' => 'application/json',
+            'HTTP_ACCEPT' => 'application/json',
+            'HTTP_X_GITHUB_DELIVERY' => 'new-token-delivery',
+            'HTTP_X_GITHUB_EVENT' => 'pull_request',
+            'HTTP_X_HUB_SIGNATURE_256' => 'sha256='.hash_hmac('sha256', $rawBody, $newToken),
+        ],
+        content: $rawBody,
+    )->assertOk()
+        ->assertJsonPath('data.status', 'unmapped_person');
+});
+
+it('revokes the webhook token without deleting the integration', function (): void {
+    Sanctum::actingAs(User::factory()->create());
+
+    $webhookToken = 'clickup-webhook-secret';
+    $integration = IntegrationSystem::factory()->create([
+        'provider' => 'clickup',
+        'token_hash' => hash('sha256', $webhookToken),
+        'token_prefix' => substr($webhookToken, 0, 8),
+        'webhook_secret' => $webhookToken,
+        'provider_api_token' => 'pk_clickup_api_token',
+    ]);
+    $this->deleteJson("/api/v1/integration-systems/{$integration->id}/token")
+        ->assertOk()
+        ->assertJsonPath('data.id', $integration->id)
+        ->assertJsonPath('data.has_webhook_token', false)
+        ->assertJsonPath('data.has_provider_api_token', true)
+        ->assertJsonPath('data.token_prefix', null)
+        ->assertJsonMissingPath('data.webhook_token');
+
+    $integration->refresh();
+
+    expect($integration->token_hash)->toBeNull()
+        ->and($integration->webhook_secret)->toBeNull()
+        ->and($integration->provider_api_token)->toBe('pk_clickup_api_token')
+        ->and($integration->token_prefix)->toBeNull()
+        ->and($integration->active)->toBeTrue();
+});
+
+it('deletes an integration while preserving events and related history', function (): void {
+    Sanctum::actingAs(User::factory()->create());
+
+    $webhookToken = 'deleted-clickup-token';
+    $integration = IntegrationSystem::factory()->create([
+        'provider' => 'clickup',
+        'token_hash' => hash('sha256', $webhookToken),
+        'token_prefix' => substr($webhookToken, 0, 8),
+        'webhook_secret' => $webhookToken,
+        'provider_api_token' => 'pk_clickup_api_token',
+    ]);
+    $identity = PersonExternalIdentity::factory()->create([
+        'integration_system_id' => $integration->id,
+    ]);
+    $event = IntegrationWebhookEvent::factory()->create([
+        'integration_system_id' => $integration->id,
+    ]);
+    $notification = ExternalNotification::factory()->create([
+        'integration_system_id' => $integration->id,
+    ]);
+
+    $this->deleteJson("/api/v1/integration-systems/{$integration->id}")
+        ->assertNoContent();
+
+    $this->postJson('/api/v1/clickup-webhooks', ['event' => 'taskUpdated'], [
+        'X-Integration-Token' => $webhookToken,
+    ])->assertUnauthorized();
+
+    $this->assertDatabaseMissing('integration_systems', ['id' => $integration->id]);
+    $this->assertDatabaseHas('person_external_identities', [
+        'id' => $identity->id,
+        'integration_system_id' => null,
+    ]);
+    $this->assertDatabaseHas('integration_webhook_events', [
+        'id' => $event->id,
+        'integration_system_id' => null,
+    ]);
+    $this->assertDatabaseHas('external_notifications', [
+        'id' => $notification->id,
+        'integration_system_id' => null,
+    ]);
+
+    $this->getJson('/api/v1/integration-webhook-events')
+        ->assertOk()
+        ->assertJsonPath('data.0.id', $event->id)
+        ->assertJsonPath('data.0.integration_system_id', null);
+
+    $this->getJson('/api/v1/notifications')
+        ->assertOk()
+        ->assertJsonPath('data.0.id', $notification->id)
+        ->assertJsonPath('data.0.integration_system_id', null)
+        ->assertJsonPath('data.0.integration_system', null);
+});
+
+it('maps an external identity to a person', function (): void {
+    Sanctum::actingAs(User::factory()->create());
+
+    $person = Person::factory()->create();
+    $integration = IntegrationSystem::factory()->create();
+
+    $this->postJson('/api/v1/person-external-identities', [
+        'person_id' => $person->id,
+        'integration_system_id' => $integration->id,
+    ])->assertCreated()
+        ->assertJsonPath('data.person_id', $person->id)
+        ->assertJsonPath('data.integration_system_id', $integration->id)
+        ->assertJsonMissingPath('data.external_username');
+
+    $identity = PersonExternalIdentity::query()->firstOrFail();
+
+    expect($identity->external_code)
+        ->toStartWith('ext_')
+        ->toHaveLength(24);
+});
+
+it('rejects duplicate person mappings for the same integration system', function (): void {
+    Sanctum::actingAs(User::factory()->create());
+
+    $integration = IntegrationSystem::factory()->create();
+    $person = Person::factory()->create();
+    PersonExternalIdentity::factory()->create([
+        'person_id' => $person->id,
+        'integration_system_id' => $integration->id,
+    ]);
+
+    $this->postJson('/api/v1/person-external-identities', [
+        'person_id' => $person->id,
+        'integration_system_id' => $integration->id,
+    ])->assertUnprocessable()
+        ->assertJsonValidationErrors('person_id');
+});
+
+it('receives a clickup automation webhook and stores only the processed payload without generating metrics', function (): void {
+    $token = 'clickup-automation-token';
+    $integration = IntegrationSystem::factory()->create([
+        'provider' => 'clickup',
+        'token_hash' => hash('sha256', $token),
+        'token_prefix' => substr($token, 0, 8),
+    ]);
+
+    $payload = clickUpAutomationPayload();
+    $eventId = hash('sha256', json_encode($payload, JSON_THROW_ON_ERROR));
+
+    $this->postJson('/api/v1/clickup-webhooks', $payload, [
+        'X-Integration-Token' => $token,
+    ])->assertOk()
+        ->assertJson(fn (AssertableJson $json) => $json
+            ->where('data.integration_system_id', $integration->id)
+            ->where('data.person_id', null)
+            ->where('data.event_id', $eventId)
+            ->where('data.event_type', 'clickup_automation')
+            ->where('data.external_actor_code', null)
+            ->where('data.status', 'unmapped_person')
+            ->where('data.payload.event_type', 'clickup_automation')
+            ->where('data.payload.task.id', '86ak1xv8h')
+            ->where('data.payload.task.custom_id', 'DRIE-21919')
+            ->where('data.payload.task.assignees.0.external_code', 'clickup_user:230504877')
+            ->where('data.payload.task.assignees.0.id', '230504877')
+            ->where('data.payload.task.assignees.0.name', 'Ronan')
+            ->whereType('data.payload_hash', 'string')
+            ->whereType('data.payload_size_bytes', 'integer')
+            ->where('data.normalized_payload.source', 'clickup')
+            ->where('data.normalized_payload.automation_id', '4ff67264-298b-4639-b0a8-4c066025f4e1:main')
+            ->where('data.normalized_payload.trigger_id', '80c28fd1-2a2c-46a5-a0d6-67b0dbd27633:tasks')
+            ->where('data.normalized_payload.workspace_id', '31134301')
+            ->where('data.normalized_payload.task_id', '86ak1xv8h')
+            ->where('data.normalized_payload.task_custom_id', 'DRIE-21919')
+            ->where('data.normalized_payload.task_name', 'Fluxo de cadastro para nova oficina')
+            ->where('data.normalized_payload.task_status', 'teste de qualidade')
+            ->where('data.normalized_payload.task_status_id', 'p90131743905_gBTMnApJ')
+            ->where('data.normalized_payload.task_sprint_points', 5)
+            ->where('data.normalized_payload.task_assignees.0.external_code', 'clickup_user:230504877')
+            ->where('data.normalized_payload.task_assignees.0.id', '230504877')
+            ->where('data.normalized_payload.task_assignees.0.name', 'Ronan')
+            ->where('data.normalized_payload.list_ids.0', '901328281243')
+            ->etc());
+
+    $event = $integration->webhookEvents()->firstOrFail();
+    expect(data_get($event->payload, 'payload.text_content'))->toBeNull()
+        ->and(data_get($event->normalized_payload, 'task_text_content'))->toBeNull();
+
+    expect(PersonDeliveryMetric::query()->count())->toBe(0);
+});
+
+it('rejects a clickup automation webhook without token or signature', function (): void {
+    $integration = IntegrationSystem::factory()->create([
+        'provider' => 'clickup',
+        'webhook_secret' => 'clickup-automation-token',
+    ]);
+
+    $this->postJson('/api/v1/clickup-webhooks', clickUpAutomationPayload())
+        ->assertForbidden()
+        ->assertJsonPath('message', 'Missing ClickUp signature.');
+
+    expect(IntegrationWebhookEvent::query()->count())->toBe(0);
+});
+
+it('maps a clickup webhook to a person by the clickup user id stored on the person', function (): void {
+    $token = 'clickup-automation-token';
+    $integration = IntegrationSystem::factory()->create([
+        'provider' => 'clickup',
+        'token_hash' => hash('sha256', $token),
+        'token_prefix' => substr($token, 0, 8),
+    ]);
+
+    $person = Person::factory()->create([
+        'tenant_id' => $integration->tenant_id,
+        'clickup_user_id' => '230504877',
+    ]);
+
+    $payload = clickUpAutomationPayload();
+    $payload['history_items'] = [[
+        'field' => 'status',
+        'user' => ['id' => '230504877', 'username' => 'Ronan'],
+    ]];
+
+    $this->postJson('/api/v1/clickup-webhooks', $payload, [
+        'X-Integration-Token' => $token,
+    ])->assertOk()
+        ->assertJsonPath('data.person_id', $person->id)
+        ->assertJsonPath('data.status', 'processed');
+});
+
+it('stores a mapped clickup webhook as lake data without generating delivery metrics', function (): void {
+    $token = 'clickup-automation-token';
+    $integration = IntegrationSystem::factory()->create([
+        'provider' => 'clickup',
+        'token_hash' => hash('sha256', $token),
+        'token_prefix' => substr($token, 0, 8),
+    ]);
+    $person = Person::factory()->create();
+    PersonExternalIdentity::factory()->create([
+        'person_id' => $person->id,
+        'integration_system_id' => $integration->id,
+        'external_code' => 'clickup_user:230504877',
+    ]);
+
+    $payload = clickUpAutomationPayload();
+    $payload['history_items'] = [[
+        'field' => 'status',
+        'user' => ['id' => '230504877', 'username' => 'Ronan'],
+    ]];
+
+    $this->postJson('/api/v1/clickup-webhooks', $payload, [
+        'X-Integration-Token' => $token,
+    ])->assertOk()
+        ->assertJsonPath('data.person_id', $person->id)
+        ->assertJsonPath('data.status', 'processed');
+
+    expect(PersonDeliveryMetric::query()->count())->toBe(0);
+});
+
+it('does not duplicate an identical clickup automation webhook retry', function (): void {
+    $token = 'clickup-automation-token';
+    $integration = IntegrationSystem::factory()->create([
+        'tenant_id' => Tenant::factory(),
+        'provider' => 'clickup',
+        'token_hash' => hash('sha256', $token),
+        'token_prefix' => substr($token, 0, 8),
+    ]);
+
+    $payload = clickUpAutomationPayload();
+
+    $this->postJson('/api/v1/clickup-webhooks', $payload, [
+        'Authorization' => "Bearer {$token}",
+    ])->assertOk();
+    $this->postJson('/api/v1/clickup-webhooks', $payload, [
+        'Authorization' => "Bearer {$token}",
+    ])->assertOk();
+
+    expect($integration->webhookEvents()->count())->toBe(1)
+        ->and(PersonDeliveryMetric::query()->count())->toBe(0)
+        ->and(DeliveryCase::query()->count())->toBe(1);
+});
+
+it('stores distinct clickup automation status changes with the same trigger id', function (): void {
+    $token = 'clickup-automation-token';
+    $integration = IntegrationSystem::factory()->create([
+        'provider' => 'clickup',
+        'token_hash' => hash('sha256', $token),
+        'token_prefix' => substr($token, 0, 8),
+    ]);
+
+    $firstPayload = clickUpAutomationPayload([
+        'date' => '2026-08-27T01:56:00.000Z',
+        'payload' => [
+            'status' => ['status' => 'em desenvolvimento'],
+            'status_id' => 'dev',
+        ],
+    ]);
+    $secondPayload = clickUpAutomationPayload([
+        'date' => '2026-08-27T02:10:00.000Z',
+        'payload' => [
+            'status' => ['status' => 'teste de qualidade'],
+            'status_id' => 'qa',
+        ],
+    ]);
+
+    $this->postJson('/api/v1/clickup-webhooks', $firstPayload, [
+        'Authorization' => "Bearer {$token}",
+    ])->assertOk();
+    $this->postJson('/api/v1/clickup-webhooks', $secondPayload, [
+        'Authorization' => "Bearer {$token}",
+    ])->assertOk();
+
+    expect($integration->webhookEvents()->count())->toBe(2)
+        ->and(
+            $integration->webhookEvents()
+                ->pluck('event_id')
+                ->unique()
+                ->count()
+        )->toBe(2);
+});
+
+it('reuses the latest known clickup task assignees when a status automation omits them', function (): void {
+    $token = 'clickup-automation-token';
+    $integration = IntegrationSystem::factory()->create([
+        'provider' => 'clickup',
+        'token_hash' => hash('sha256', $token),
+        'token_prefix' => substr($token, 0, 8),
+    ]);
+
+    $assigneePayload = clickUpAutomationPayload([
+        'trigger_id' => 'assignee-added-trigger',
+        'date' => '2026-08-27T01:56:00.000Z',
+    ]);
+    $statusPayload = clickUpAutomationPayload([
+        'trigger_id' => 'status-changed-trigger',
+        'date' => '2026-08-27T02:10:00.000Z',
+        'payload' => [
+            'status' => ['status' => 'pendente'],
+            'users' => [],
+        ],
+    ]);
+
+    $this->postJson('/api/v1/clickup-webhooks', $assigneePayload, [
+        'X-Integration-Token' => $token,
+    ])->assertOk();
+    $this->postJson('/api/v1/clickup-webhooks', $statusPayload, [
+        'X-Integration-Token' => $token,
+    ])->assertOk()
+        ->assertJsonPath('data.payload.task.assignees.0.external_code', 'clickup_user:230504877')
+        ->assertJsonPath('data.normalized_payload.task_assignees.0.external_code', 'clickup_user:230504877');
+
+    expect($integration->webhookEvents()->count())->toBe(2);
+});
+
+it('enriches an incomplete clickup task snapshot before opening the database transaction', function (): void {
+    $transactionLevelBeforeRequest = DB::transactionLevel();
+
+    Http::fake(function ($request) use ($transactionLevelBeforeRequest) {
+        expect($request->url())->toBe('https://api.clickup.com/api/v2/task/86ak1xv8h')
+            ->and(DB::transactionLevel())->toBe($transactionLevelBeforeRequest);
+
+        return Http::response([
+            'id' => '86ak1xv8h',
+            'custom_id' => 'DRIE-21919',
+            'name' => 'Fluxo enriquecido',
+            'status' => ['status' => 'Fazendo'],
+            'points' => 8,
+            'url' => 'https://app.clickup.com/t/86ak1xv8h',
+            'list' => ['id' => '901328281243'],
+            'tags' => [['name' => 'HOMOLOG']],
+            'assignees' => [
+                [
+                    'id' => 242687264,
+                    'username' => 'Ronan',
+                ],
+            ],
+        ]);
+    });
+
+    $token = 'clickup-automation-token';
+    IntegrationSystem::factory()->create([
+        'provider' => 'clickup',
+        'provider_api_token' => 'pk_clickup_api_token',
+        'token_hash' => hash('sha256', $token),
+        'token_prefix' => substr($token, 0, 8),
+    ]);
+
+    $payload = clickUpAutomationPayload();
+    $payload['payload']['users'] = [];
+    $payload['payload']['custom_id'] = null;
+    $payload['payload']['sprint_points'] = null;
+
+    $this->postJson('/api/v1/clickup-webhooks', $payload, [
+        'X-Integration-Token' => $token,
+    ])->assertOk()
+        ->assertJsonPath('data.payload.task.assignees.0.external_code', 'clickup_user:242687264')
+        ->assertJsonPath('data.payload.task.assignees.0.name', 'Ronan')
+        ->assertJsonPath('data.normalized_payload.task_assignees.0.id', '242687264')
+        ->assertJsonPath('data.normalized_payload.task_custom_id', 'DRIE-21919')
+        ->assertJsonPath('data.normalized_payload.task_sprint_points', 8)
+        ->assertJsonPath('data.normalized_payload.task_tags.0', 'HOMOLOG')
+        ->assertJsonPath('data.normalized_payload.list_ids.0', '901328281243')
+        ->assertJsonPath('data.normalized_payload.task_refs.0', 'DRIE-21919');
+
+    Http::assertSent(fn ($request): bool => $request->hasHeader('Authorization', 'pk_clickup_api_token')
+        && $request->url() === 'https://api.clickup.com/api/v2/task/86ak1xv8h');
+});
+
+it('keeps the webhook actor separate from the task assignee', function (): void {
+    $token = 'clickup-actor-separation-token';
+    IntegrationSystem::factory()->create([
+        'provider' => 'clickup',
+        'token_hash' => hash('sha256', $token),
+        'token_prefix' => substr($token, 0, 8),
+    ]);
+
+    $payload = clickUpAutomationPayload();
+    $payload['history_items'] = [[
+        'id' => 'actor-separation-history',
+        'field' => 'status',
+        'user' => ['id' => 'actor-123', 'username' => 'Quem alterou'],
+    ]];
+    $payload['user_id'] = null;
+    $payload['payload']['users'] = [['userid' => 242687264, 'username' => 'Responsável']];
+
+    $this->postJson('/api/v1/clickup-webhooks', $payload, [
+        'X-Integration-Token' => $token,
+    ])->assertOk()
+        ->assertJsonPath('data.external_actor_code', 'clickup_user:actor-123')
+        ->assertJsonPath('data.person_id', null)
+        ->assertJsonPath('data.payload.task.assignees.0.name', 'Responsável')
+        ->assertJsonPath('data.normalized_payload.task_assignees.0.external_code', 'clickup_user:242687264')
+        ->assertJsonPath('data.normalized_payload.user_name', 'Quem alterou');
+});
+
+it('records when clickup task enrichment is skipped because no provider api token is configured', function (): void {
+    $token = 'clickup-missing-api-token';
+    IntegrationSystem::factory()->create([
+        'provider' => 'clickup',
+        'token_hash' => hash('sha256', $token),
+        'token_prefix' => substr($token, 0, 8),
+    ]);
+
+    $this->postJson('/api/v1/clickup-webhooks', clickUpAutomationPayload(), [
+        'X-Integration-Token' => $token,
+    ])->assertOk()
+        ->assertJsonPath('data.normalized_payload.task_enrichment_status', 'skipped_missing_provider_api_token');
+});
+
+it('receives a clickup api webhook payload using a query token', function (): void {
+    $token = 'clickup-api-webhook-token';
+    $integration = IntegrationSystem::factory()->create([
+        'provider' => 'clickup',
+        'token_hash' => hash('sha256', $token),
+        'token_prefix' => substr($token, 0, 8),
+    ]);
+
+    $this->postJson(
+        "/api/v1/clickup-webhooks?token={$token}",
+        clickUpApiWebhookPayload(),
+    )->assertOk()
+        ->assertJsonPath('data.event_id', '4b67ac88-5749-4fdb-a975-ec5ed16b66e3:hist_123')
+        ->assertJsonPath('data.event_type', 'taskStatusUpdated')
+        ->assertJsonPath('data.external_actor_code', 'clickup_user:230504877')
+        ->assertJsonPath('data.normalized_payload.history_field', 'status')
+        ->assertJsonPath('data.normalized_payload.history_before', 'open')
+        ->assertJsonPath('data.normalized_payload.history_after', 'done')
+        ->assertJsonPath('data.normalized_payload.user_name', 'Ronan')
+        ->assertJsonPath('data.normalized_payload.task_id', '86ak1xv8h');
+
+    expect(PersonDeliveryMetric::query()->count())->toBe(0);
+});
+
+it('normalizes clickup status objects and kanban stages', function (): void {
+    $token = 'clickup-object-status-token';
+    IntegrationSystem::factory()->create([
+        'provider' => 'clickup',
+        'token_hash' => hash('sha256', $token),
+        'token_prefix' => substr($token, 0, 8),
+    ]);
+
+    $payload = clickUpApiWebhookPayload([
+        'history_items' => [[
+            'id' => 'hist-object-status',
+            'date' => '1787795760000',
+            'field' => 'status',
+            'before' => ['status' => 'Em teste de QA'],
+            'after' => ['status' => 'Reprovado pelo QA'],
+            'user' => [
+                'id' => 230504877,
+                'username' => 'Ronan',
+            ],
+        ]],
+    ]);
+
+    $this->postJson("/api/v1/clickup-webhooks?token={$token}", $payload)
+        ->assertOk()
+        ->assertJsonPath('data.normalized_payload.history_before', 'Em teste de QA')
+        ->assertJsonPath('data.normalized_payload.history_after', 'Reprovado pelo QA')
+        ->assertJsonPath('data.normalized_payload.history_before_stage', 'in_qa')
+        ->assertJsonPath('data.normalized_payload.history_after_stage', 'qa_failed')
+        ->assertJsonPath('data.payload.change.before_stage', 'in_qa')
+        ->assertJsonPath('data.payload.change.after_stage', 'qa_failed');
+});
+
+it('normalizes clickup task and history tags without duplicating them', function (): void {
+    $token = 'clickup-tag-token';
+    IntegrationSystem::factory()->create([
+        'provider' => 'clickup',
+        'token_hash' => hash('sha256', $token),
+        'token_prefix' => substr($token, 0, 8),
+    ]);
+
+    $payload = clickUpAutomationPayload([
+        'trigger_id' => 'tag-change-trigger',
+        'payload' => [
+            'tags' => [
+                ['name' => 'HOMOLOG'],
+                ['name' => 'MERGIADO'],
+                ['name' => 'HOMOLOG'],
+            ],
+        ],
+        'history_items' => [[
+            'id' => 'hist-tag-change',
+            'field' => 'tag',
+            'before' => ['name' => 'HOMOLOG'],
+            'after' => ['name' => 'MERGIADO'],
+            'user' => [
+                'id' => 230504877,
+                'username' => 'Ronan',
+            ],
+        ]],
+    ]);
+
+    $this->postJson('/api/v1/clickup-webhooks', $payload, [
+        'X-Integration-Token' => $token,
+    ])->assertOk()
+        ->assertJsonPath('data.normalized_payload.task_tags', ['HOMOLOG', 'MERGIADO'])
+        ->assertJsonPath('data.normalized_payload.history_before', ['HOMOLOG'])
+        ->assertJsonPath('data.normalized_payload.history_after', ['MERGIADO']);
+});
+
+it('normalizes clickup assignee changes independently from the event actor', function (): void {
+    $token = 'clickup-assignee-history-token';
+    IntegrationSystem::factory()->create([
+        'provider' => 'clickup',
+        'token_hash' => hash('sha256', $token),
+        'token_prefix' => substr($token, 0, 8),
+    ]);
+
+    $payload = clickUpApiWebhookPayload([
+        'history_items' => [[
+            'id' => 'hist-assignee-change',
+            'date' => '1787795760000',
+            'field' => 'assignee',
+            'before' => [['id' => 100, 'username' => 'Dev']],
+            'after' => [
+                ['id' => 100, 'username' => 'Dev'],
+                ['id' => 200, 'username' => 'QA'],
+            ],
+            'user' => [
+                'id' => 200,
+                'username' => 'QA',
+            ],
+        ]],
+    ]);
+
+    $this->postJson("/api/v1/clickup-webhooks?token={$token}", $payload)
+        ->assertOk()
+        ->assertJsonPath('data.external_actor_code', 'clickup_user:200')
+        ->assertJsonPath('data.normalized_payload.history_before.0.external_code', 'clickup_user:100')
+        ->assertJsonPath('data.normalized_payload.history_after.0.external_code', 'clickup_user:100')
+        ->assertJsonPath('data.normalized_payload.history_after.1.external_code', 'clickup_user:200');
+});
+
+it('does not restore removed assignees from an older task snapshot', function (): void {
+    $token = 'clickup-assignee-removal-token';
+    IntegrationSystem::factory()->create([
+        'provider' => 'clickup',
+        'token_hash' => hash('sha256', $token),
+        'token_prefix' => substr($token, 0, 8),
+    ]);
+
+    $this->postJson('/api/v1/clickup-webhooks', clickUpAutomationPayload([
+        'trigger_id' => 'assignee-snapshot-before-removal',
+        'payload' => [
+            'users' => [['userid' => 100, 'username' => 'Dev']],
+        ],
+    ]), [
+        'X-Integration-Token' => $token,
+    ])->assertOk();
+
+    $removalPayload = [
+        'webhook_id' => 'clickup-assignee-removal-webhook',
+        'event' => 'taskAssigneeUpdated',
+        'task_id' => '86ak1xv8h',
+        'history_items' => [[
+            'id' => 'hist-assignee-removal',
+            'date' => '1787795760000',
+            'field' => 'assignee',
+            'before' => [['id' => 100, 'username' => 'Dev']],
+            'after' => [],
+            'user' => ['id' => 100, 'username' => 'Dev'],
+        ]],
+    ];
+
+    $this->postJson("/api/v1/clickup-webhooks?token={$token}", $removalPayload)
+        ->assertOk()
+        ->assertJsonPath('data.normalized_payload.task_custom_id', 'DRIE-21919')
+        ->assertJsonPath('data.normalized_payload.task_assignees', [])
+        ->assertJsonPath('data.normalized_payload.task_assignees_authoritative', true)
+        ->assertJsonPath('data.normalized_payload.history_after', []);
+});
+
+it('receives a signed clickup api webhook through a url without a token or integration id', function (): void {
+    $token = 'clickup-api-webhook-secret';
+    $integration = IntegrationSystem::factory()->create([
+        'provider' => 'clickup',
+        'token_hash' => hash('sha256', $token),
+        'webhook_secret' => $token,
+        'token_prefix' => substr($token, 0, 8),
+    ]);
+    $payload = clickUpApiWebhookPayload();
+    $rawBody = json_encode($payload, JSON_THROW_ON_ERROR);
+
+    $this->call(
+        'POST',
+        '/api/v1/clickup-webhooks',
+        server: [
+            'CONTENT_TYPE' => 'application/json',
+            'HTTP_ACCEPT' => 'application/json',
+            'HTTP_X_SIGNATURE' => hash_hmac('sha256', $rawBody, $token),
+        ],
+        content: $rawBody,
+    )->assertOk()
+        ->assertJsonPath('data.integration_system_id', $integration->id)
+        ->assertJsonPath('data.event_id', '4b67ac88-5749-4fdb-a975-ec5ed16b66e3:hist_123')
+        ->assertJsonPath('data.event_type', 'taskStatusUpdated')
+        ->assertJsonPath('data.normalized_payload.source', 'clickup');
+
+    expect(PersonDeliveryMetric::query()->count())->toBe(0);
+});
+
+it('rejects clickup webhooks for non clickup integrations', function (): void {
+    $token = 'github-secret-token';
+    $integration = IntegrationSystem::factory()->create([
+        'provider' => 'github',
+        'token_hash' => hash('sha256', $token),
+        'token_prefix' => substr($token, 0, 8),
+    ]);
+
+    $this->postJson('/api/v1/clickup-webhooks', clickUpAutomationPayload(), [
+        'Authorization' => "Bearer {$token}",
+    ])->assertUnauthorized();
+});
+
+it('rejects clickup webhooks for inactive clickup integrations resolved by token', function (): void {
+    $token = 'inactive-clickup-token';
+    IntegrationSystem::factory()->create([
+        'provider' => 'clickup',
+        'active' => false,
+        'token_hash' => hash('sha256', $token),
+        'token_prefix' => substr($token, 0, 8),
+    ]);
+
+    $this->postJson('/api/v1/clickup-webhooks', clickUpAutomationPayload(), [
+        'Authorization' => "Bearer {$token}",
+    ])->assertForbidden();
+});
+
+it('receives a github pull request webhook and stores only the processed payload without generating metrics', function (): void {
+    $token = 'github-webhook-secret';
+    $integration = IntegrationSystem::factory()->create([
+        'provider' => 'github',
+        'token_hash' => hash('sha256', $token),
+        'token_prefix' => substr($token, 0, 8),
+    ]);
+    $payload = githubNativePullRequestPayload();
+    $rawBody = json_encode($payload, JSON_THROW_ON_ERROR);
+
+    $this->call(
+        'POST',
+        "/api/v1/github-webhooks?token={$token}",
+        server: [
+            'CONTENT_TYPE' => 'application/json',
+            'HTTP_ACCEPT' => 'application/json',
+            'HTTP_X_GITHUB_DELIVERY' => '7c4f3d30-42b5-4d4b-9f8f-8d99555d4c15',
+            'HTTP_X_GITHUB_EVENT' => 'pull_request',
+            'HTTP_X_GITHUB_HOOK_ID' => '987654',
+            'HTTP_X_HUB_SIGNATURE_256' => 'sha256='.hash_hmac('sha256', $rawBody, $token),
+        ],
+        content: $rawBody,
+    )->assertOk()
+        ->assertJson(fn (AssertableJson $json) => $json
+            ->where('data.integration_system_id', $integration->id)
+            ->where('data.person_id', null)
+            ->where('data.event_id', '7c4f3d30-42b5-4d4b-9f8f-8d99555d4c15')
+            ->where('data.event_type', 'pull_request.opened')
+            ->where('data.external_actor_code', 'github_user:lucas-github')
+            ->where('data.status', 'unmapped_person')
+            ->where('data.payload.event_type', 'pull_request.opened')
+            ->where('data.payload.pull_request.number', 42)
+            ->where('data.payload.pull_request.author_login', 'lucas-github')
+            ->whereType('data.payload_hash', 'string')
+            ->whereType('data.payload_size_bytes', 'integer')
+            ->where('data.normalized_payload.source', 'github')
+            ->where('data.normalized_payload.delivery_id', '7c4f3d30-42b5-4d4b-9f8f-8d99555d4c15')
+            ->where('data.normalized_payload.hook_id', '987654')
+            ->where('data.normalized_payload.repository_full_name', '4techlead/api')
+            ->where('data.normalized_payload.sender_login', 'lucas-github')
+            ->where('data.normalized_payload.pr_number', 42)
+            ->where('data.normalized_payload.pr_title', 'DRIE-21919 entregar fluxo de cadastro')
+            ->where('data.normalized_payload.pr_state', 'open')
+            ->where('data.normalized_payload.pr_draft', false)
+            ->where('data.normalized_payload.pr_merged', false)
+            ->where('data.normalized_payload.pr_author', 'lucas-github')
+            ->where('data.normalized_payload.head_ref', 'feature/DRIE-21919-cadastro-oficina')
+            ->where('data.normalized_payload.base_ref', 'main')
+            ->where('data.normalized_payload.task_refs.0', 'DRIE-21919')
+            ->etc());
+
+    $event = $integration->webhookEvents()->firstOrFail();
+    expect(data_get($event->payload, 'pull_request.body'))->toBeNull()
+        ->and(data_get($event->payload, 'sender'))->toBeNull();
+
+    expect(PersonDeliveryMetric::query()->count())->toBe(0);
+});
+
+it('maps a github pull request webhook to a person by the github username stored on the person', function (): void {
+    $token = 'github-webhook-secret';
+    $integration = IntegrationSystem::factory()->create([
+        'provider' => 'github',
+        'token_hash' => hash('sha256', $token),
+        'webhook_secret' => $token,
+        'token_prefix' => substr($token, 0, 8),
+    ]);
+    $person = Person::factory()->create([
+        'tenant_id' => $integration->tenant_id,
+        'github_username' => 'lucas-github',
+    ]);
+
+    $this->postJson('/api/v1/github-webhooks', githubNativePullRequestPayload(), [
+        'Authorization' => "Bearer {$token}",
+        'X-GitHub-Delivery' => 'person-github-id-delivery',
+        'X-GitHub-Event' => 'pull_request',
+    ])->assertOk()
+        ->assertJsonPath('data.person_id', $person->id)
+        ->assertJsonPath('data.status', 'processed');
+});
+
+it('receives a signed github webhook through a url without a token or integration id', function (): void {
+    $token = 'github-webhook-secret';
+    $integration = IntegrationSystem::factory()->create([
+        'provider' => 'github',
+        'token_hash' => hash('sha256', $token),
+        'webhook_secret' => $token,
+        'token_prefix' => substr($token, 0, 8),
+    ]);
+    $payload = githubNativePullRequestPayload();
+    $rawBody = json_encode($payload, JSON_THROW_ON_ERROR);
+
+    $this->call(
+        'POST',
+        '/api/v1/github-webhooks',
+        server: [
+            'CONTENT_TYPE' => 'application/json',
+            'HTTP_ACCEPT' => 'application/json',
+            'HTTP_X_GITHUB_DELIVERY' => 'signed-delivery-1',
+            'HTTP_X_GITHUB_EVENT' => 'pull_request',
+            'HTTP_X_HUB_SIGNATURE_256' => 'sha256='.hash_hmac('sha256', $rawBody, $token),
+        ],
+        content: $rawBody,
+    )->assertOk()
+        ->assertJsonPath('data.integration_system_id', $integration->id)
+        ->assertJsonPath('data.event_id', 'signed-delivery-1')
+        ->assertJsonPath('data.event_type', 'pull_request.opened')
+        ->assertJsonPath('data.normalized_payload.source', 'github');
+
+    expect(PersonDeliveryMetric::query()->count())->toBe(0);
+});
+
+it('stores a mapped merged github pull request webhook and generates delivery metrics', function (): void {
+    $token = 'github-webhook-secret';
+    $integration = IntegrationSystem::factory()->create([
+        'provider' => 'github',
+        'token_hash' => hash('sha256', $token),
+        'webhook_secret' => $token,
+        'token_prefix' => substr($token, 0, 8),
+    ]);
+    $person = Person::factory()->create();
+    PersonExternalIdentity::factory()->create([
+        'person_id' => $person->id,
+        'integration_system_id' => $integration->id,
+        'external_code' => 'github_user:lucas-github',
+    ]);
+    $payload = githubNativePullRequestPayload([
+        'action' => 'closed',
+        'pull_request' => [
+            'state' => 'closed',
+            'merged' => true,
+            'closed_at' => '2026-08-28T18:00:00Z',
+            'merged_at' => '2026-08-28T18:00:00Z',
+            'comments' => 8,
+            'review_comments' => 5,
+            'changed_files' => 12,
+            'additions' => 420,
+            'deletions' => 80,
+        ],
+    ]);
+    $rawBody = json_encode($payload, JSON_THROW_ON_ERROR);
+
+    $this->call(
+        'POST',
+        '/api/v1/github-webhooks',
+        server: [
+            'CONTENT_TYPE' => 'application/json',
+            'HTTP_ACCEPT' => 'application/json',
+            'HTTP_X_GITHUB_DELIVERY' => 'merged-delivery-1',
+            'HTTP_X_GITHUB_EVENT' => 'pull_request',
+            'HTTP_X_HUB_SIGNATURE_256' => 'sha256='.hash_hmac('sha256', $rawBody, $token),
+        ],
+        content: $rawBody,
+    )->assertOk()
+        ->assertJsonPath('data.person_id', $person->id)
+        ->assertJsonPath('data.status', 'processed')
+        ->assertJsonPath('data.normalized_payload.changed_lines', 500)
+        ->assertJsonPath('data.normalized_payload.pr_merge_time_hours', 32);
+
+    expect(PersonDeliveryMetric::query()->pluck('metric_type')->all())->toEqualCanonicalizing([
+        'pull_request_merged_count',
+        'code_quality_score',
+        'pull_request_open_time',
+        'pull_request_merge_time',
+        'pull_request_changed_files',
+        'pull_request_changed_lines',
+    ]);
+});
+
+it('crosses a completed clickup task with the related merged github pull request', function (): void {
+    $tenantId = Tenant::factory()->create()->id;
+    $clickUpToken = 'clickup-crossing-token';
+    $githubToken = 'github-crossing-token';
+    $clickUp = IntegrationSystem::factory()->create([
+        'tenant_id' => $tenantId,
+        'provider' => 'clickup',
+        'token_hash' => hash('sha256', $clickUpToken),
+        'token_prefix' => substr($clickUpToken, 0, 8),
+    ]);
+    $github = IntegrationSystem::factory()->create([
+        'tenant_id' => $tenantId,
+        'provider' => 'github',
+        'token_hash' => hash('sha256', $githubToken),
+        'webhook_secret' => $githubToken,
+        'token_prefix' => substr($githubToken, 0, 8),
+    ]);
+    $person = Person::factory()->create([
+        'tenant_id' => $tenantId,
+        'clickup_user_id' => '230504877',
+        'github_username' => 'lucas-github',
+    ]);
+
+    $this->postJson('/api/v1/clickup-webhooks', clickUpAutomationPayload([
+        'event' => 'taskStatusUpdated',
+        'date' => '2026-08-28T18:00:00Z',
+        'history_items' => [[
+            'id' => 'history-completed-1',
+            'date' => '2026-08-28T18:00:00Z',
+            'field' => 'status',
+            'before' => 'teste de qualidade',
+            'after' => 'Publicado',
+            'user' => ['id' => 230504877, 'username' => 'Ronan'],
+        ]],
+    ]), [
+        'X-Integration-Token' => $clickUpToken,
+    ])->assertOk();
+
+    expect(PersonDeliveryMetric::query()->count())->toBe(0);
+
+    $deliveryCase = DeliveryCase::query()->sole();
+    expect($deliveryCase->task_ref)->toBe('DRIE-21919')
+        ->and($deliveryCase->current_stage)->toBe(DeliveryStage::Published)
+        ->and($deliveryCase->completed_at)->not->toBeNull();
+
+    $this->postJson('/api/v1/github-webhooks', githubNativePullRequestPayload([
+        'action' => 'closed',
+        'pull_request' => [
+            'state' => 'closed',
+            'merged' => true,
+            'closed_at' => '2026-08-27T10:00:00Z',
+            'merged_at' => '2026-08-27T10:00:00Z',
+        ],
+    ]), [
+        'Authorization' => "Bearer {$githubToken}",
+        'X-GitHub-Delivery' => 'crossing-delivery-1',
+        'X-GitHub-Event' => 'pull_request',
+    ])->assertOk();
+
+    $githubEvent = $github->webhookEvents()->firstOrFail();
+
+    expect(PersonDeliveryMetric::query()->where('person_id', $person->id)
+        ->where('integration_webhook_event_id', $githubEvent->id)
+        ->pluck('metric_type')->all())->toContain(
+            'task_pull_request_link_count',
+        );
+    expect(PersonDeliveryMetric::query()
+        ->where('metric_type', 'task_to_pull_request_hours')
+        ->count())->toBe(0);
+});
+
+it('rejects github webhook urls without a token when the signature is missing', function (): void {
+    $token = 'github-webhook-secret';
+    IntegrationSystem::factory()->create([
+        'provider' => 'github',
+        'token_hash' => hash('sha256', $token),
+        'webhook_secret' => $token,
+        'token_prefix' => substr($token, 0, 8),
+    ]);
+
+    $this->postJson('/api/v1/github-webhooks', githubNativePullRequestPayload(), [
+        'X-GitHub-Delivery' => 'signed-delivery-1',
+        'X-GitHub-Event' => 'pull_request',
+    ])->assertForbidden();
+});
+
+it('does not duplicate github webhook deliveries', function (): void {
+    $token = 'github-webhook-secret';
+    $integration = IntegrationSystem::factory()->create([
+        'provider' => 'github',
+        'token_hash' => hash('sha256', $token),
+        'token_prefix' => substr($token, 0, 8),
+    ]);
+    $payload = githubNativePullRequestPayload();
+
+    $this->postJson('/api/v1/github-webhooks', $payload, [
+        'Authorization' => "Bearer {$token}",
+        'X-GitHub-Delivery' => '7c4f3d30-42b5-4d4b-9f8f-8d99555d4c15',
+        'X-GitHub-Event' => 'pull_request',
+    ])->assertOk();
+    $this->postJson('/api/v1/github-webhooks', $payload, [
+        'Authorization' => "Bearer {$token}",
+        'X-GitHub-Delivery' => '7c4f3d30-42b5-4d4b-9f8f-8d99555d4c15',
+        'X-GitHub-Event' => 'pull_request',
+    ])->assertOk();
+
+    expect($integration->webhookEvents()->count())->toBe(1)
+        ->and(PersonDeliveryMetric::query()->count())->toBe(0);
+});
+
+it('extracts a case insensitive task reference without reading the base branch', function (): void {
+    $token = 'github-task-reference-token';
+    IntegrationSystem::factory()->create([
+        'provider' => 'github',
+        'token_hash' => hash('sha256', $token),
+        'token_prefix' => substr($token, 0, 8),
+    ]);
+    $payload = githubNativePullRequestPayload([
+        'pull_request' => [
+            'title' => 'Ajusta cadastro',
+            'body' => null,
+            'head' => ['ref' => 'feature/drie-21919-cadastro'],
+            'base' => ['ref' => 'release/DRIE-99999'],
+        ],
+    ]);
+
+    $this->postJson('/api/v1/github-webhooks', $payload, [
+        'Authorization' => "Bearer {$token}",
+        'X-GitHub-Delivery' => 'lowercase-task-ref-delivery',
+        'X-GitHub-Event' => 'pull_request',
+    ])->assertOk()
+        ->assertJsonPath('data.normalized_payload.task_refs', ['DRIE-21919'])
+        ->assertJsonPath('data.normalized_payload.task_ref_ambiguous', false);
+});
+
+it('receives github ci and review webhook events as operational lake data', function (): void {
+    $token = 'github-webhook-secret';
+    IntegrationSystem::factory()->create([
+        'provider' => 'github-actions',
+        'token_hash' => hash('sha256', $token),
+        'token_prefix' => substr($token, 0, 8),
+    ]);
+
+    $this->postJson('/api/v1/github-webhooks', githubNativeReviewPayload(), [
+        'X-Integration-Token' => $token,
+        'X-GitHub-Delivery' => 'review-delivery-1',
+        'X-GitHub-Event' => 'pull_request_review',
+    ])->assertOk()
+        ->assertJsonPath('data.event_id', 'review-delivery-1')
+        ->assertJsonPath('data.event_type', 'pull_request_review.submitted')
+        ->assertJsonPath('data.external_actor_code', 'github_user:reviewer-github')
+        ->assertJsonPath('data.normalized_payload.review_state', 'changes_requested')
+        ->assertJsonPath('data.normalized_payload.pr_number', 42)
+        ->assertJsonPath('data.normalized_payload.task_refs.0', 'DRIE-21919');
+
+    $this->postJson('/api/v1/github-webhooks', githubNativeCheckRunPayload(), [
+        'X-Integration-Token' => $token,
+        'X-GitHub-Delivery' => 'check-run-delivery-1',
+        'X-GitHub-Event' => 'check_run',
+    ])->assertOk()
+        ->assertJsonPath('data.event_id', 'check-run-delivery-1')
+        ->assertJsonPath('data.event_type', 'check_run.completed')
+        ->assertJsonPath('data.normalized_payload.check_run_name', 'tests')
+        ->assertJsonPath('data.normalized_payload.check_run_status', 'completed')
+        ->assertJsonPath('data.normalized_payload.check_run_conclusion', 'failure')
+        ->assertJsonPath('data.normalized_payload.check_run_check_suite_id', 8001)
+        ->assertJsonPath('data.normalized_payload.pr_number', 42)
+        ->assertJsonPath('data.normalized_payload.head_ref', 'feature/DRIE-21919-cadastro-oficina')
+        ->assertJsonPath('data.normalized_payload.task_refs.0', 'DRIE-21919');
+
+    $this->postJson('/api/v1/github-webhooks', githubNativeCheckSuitePayload(), [
+        'X-Integration-Token' => $token,
+        'X-GitHub-Delivery' => 'check-suite-delivery-1',
+        'X-GitHub-Event' => 'check_suite',
+    ])->assertOk()
+        ->assertJsonPath('data.event_type', 'check_suite.completed')
+        ->assertJsonPath('data.payload.check_suite.conclusion', 'success')
+        ->assertJsonPath('data.normalized_payload.check_suite_head_branch', 'feature/DRIE-21919-cadastro-oficina')
+        ->assertJsonPath('data.normalized_payload.head_sha', 'abc123')
+        ->assertJsonPath('data.normalized_payload.occurred_at', '2026-08-27T10:14:00.000000Z');
+
+    $this->postJson('/api/v1/github-webhooks', githubNativeWorkflowRunPayload(), [
+        'X-Integration-Token' => $token,
+        'X-GitHub-Delivery' => 'workflow-run-delivery-1',
+        'X-GitHub-Event' => 'workflow_run',
+    ])->assertOk()
+        ->assertJsonPath('data.event_type', 'workflow_run.completed')
+        ->assertJsonPath('data.payload.workflow_run.name', 'CI')
+        ->assertJsonPath('data.normalized_payload.workflow_id', 77)
+        ->assertJsonPath('data.normalized_payload.workflow_run_attempt', 2)
+        ->assertJsonPath('data.normalized_payload.workflow_check_suite_id', 8001)
+        ->assertJsonPath('data.normalized_payload.workflow_run_conclusion', 'failure');
+
+    $this->postJson('/api/v1/github-webhooks', githubNativeDeploymentStatusPayload(), [
+        'X-Integration-Token' => $token,
+        'X-GitHub-Delivery' => 'deployment-status-delivery-1',
+        'X-GitHub-Event' => 'deployment_status',
+    ])->assertOk()
+        ->assertJsonPath('data.event_type', 'deployment_status.created')
+        ->assertJsonPath('data.payload.deployment.environment', 'production')
+        ->assertJsonPath('data.normalized_payload.deployment_status_state', 'failure');
+
+    expect(PersonDeliveryMetric::query()->count())->toBe(0);
+});
+
+it('attributes a github actions bot event to the related pull request author across integrations', function (): void {
+    $person = Person::factory()->create(['github_username' => 'lucas-github']);
+    $githubToken = 'github-pr-token';
+    $actionsToken = 'github-actions-token';
+    IntegrationSystem::factory()->create([
+        'tenant_id' => $person->tenant_id,
+        'provider' => 'github',
+        'token_hash' => hash('sha256', $githubToken),
+        'token_prefix' => substr($githubToken, 0, 8),
+    ]);
+    IntegrationSystem::factory()->create([
+        'tenant_id' => $person->tenant_id,
+        'provider' => 'github-actions',
+        'token_hash' => hash('sha256', $actionsToken),
+        'token_prefix' => substr($actionsToken, 0, 8),
+    ]);
+
+    $this->postJson('/api/v1/github-webhooks', githubNativePullRequestPayload(), [
+        'Authorization' => "Bearer {$githubToken}",
+        'X-GitHub-Delivery' => 'cross-integration-pr',
+        'X-GitHub-Event' => 'pull_request',
+    ])->assertOk()
+        ->assertJsonPath('data.person_id', $person->id);
+
+    $this->postJson('/api/v1/github-webhooks', githubNativeWorkflowRunPayload(), [
+        'Authorization' => "Bearer {$actionsToken}",
+        'X-GitHub-Delivery' => 'cross-integration-workflow',
+        'X-GitHub-Event' => 'workflow_run',
+    ])->assertOk()
+        ->assertJsonPath('data.external_actor_code', 'github_user:github-actions[bot]')
+        ->assertJsonPath('data.person_id', $person->id)
+        ->assertJsonPath('data.status', 'processed');
+});
+
+it('rejects github webhooks with an invalid signature', function (): void {
+    $token = 'github-webhook-secret';
+    IntegrationSystem::factory()->create([
+        'provider' => 'github',
+        'token_hash' => hash('sha256', $token),
+        'token_prefix' => substr($token, 0, 8),
+    ]);
+
+    $this->postJson('/api/v1/github-webhooks', githubNativePullRequestPayload(), [
+        'Authorization' => "Bearer {$token}",
+        'X-GitHub-Delivery' => '7c4f3d30-42b5-4d4b-9f8f-8d99555d4c15',
+        'X-GitHub-Event' => 'pull_request',
+        'X-Hub-Signature-256' => 'sha256=invalid',
+    ])->assertForbidden();
+});
+
+it('rejects github webhooks for inactive integrations resolved by token', function (): void {
+    $token = 'inactive-github-token';
+    IntegrationSystem::factory()->create([
+        'provider' => 'github',
+        'active' => false,
+        'token_hash' => hash('sha256', $token),
+        'token_prefix' => substr($token, 0, 8),
+    ]);
+
+    $this->postJson('/api/v1/github-webhooks', githubNativePullRequestPayload(), [
+        'Authorization' => "Bearer {$token}",
+        'X-GitHub-Delivery' => '7c4f3d30-42b5-4d4b-9f8f-8d99555d4c15',
+        'X-GitHub-Event' => 'pull_request',
+    ])->assertForbidden();
+});
+
+/**
+ * @return array<string, mixed>
+ */
+function clickUpAutomationPayload(array $overrides = []): array
+{
+    return array_replace_recursive([
+        'auto_id' => '4ff67264-298b-4639-b0a8-4c066025f4e1:main',
+        'date' => '2026-08-27T01:56:00.000Z',
+        'trigger_id' => '80c28fd1-2a2c-46a5-a0d6-67b0dbd27633:tasks',
+        'payload' => [
+            'id' => '86ak1xv8h',
+            'custom_id' => 'DRIE-21919',
+            'name' => 'Fluxo de cadastro para nova oficina',
+            'text_content' => 'Cadastrar oficina nova e validar fluxo completo.',
+            'status_id' => 'p90131743905_gBTMnApJ',
+            'workspace_id' => '31134301',
+            'sprint_points' => 5,
+            'url' => 'https://app.clickup.com/t/86ak1xv8h',
+            'status' => [
+                'id' => 'p90131743905_gBTMnApJ',
+                'status' => 'teste de qualidade',
+                'color' => '#e16b16',
+            ],
+            'lists' => [
+                [
+                    'list_id' => '901328281243',
+                    'name' => 'Sprint atual',
+                ],
+            ],
+            'ownership' => [
+                'owner' => '230504877',
+            ],
+            'users' => [
+                [
+                    'userid' => 230504877,
+                    'username' => 'Ronan',
+                ],
+            ],
+        ],
+    ], $overrides);
+}
+
+/**
+ * @return array<string, mixed>
+ */
+function clickUpApiWebhookPayload(array $overrides = []): array
+{
+    return array_replace_recursive([
+        'webhook_id' => '4b67ac88-5749-4fdb-a975-ec5ed16b66e3',
+        'event' => 'taskStatusUpdated',
+        'task_id' => '86ak1xv8h',
+        'history_items' => [
+            [
+                'id' => 'hist_123',
+                'date' => '1787795760000',
+                'field' => 'status',
+                'before' => 'open',
+                'after' => 'done',
+                'user' => [
+                    'id' => 230504877,
+                    'username' => 'Ronan',
+                ],
+            ],
+        ],
+    ], $overrides);
+}
+
+/**
+ * @return array<string, mixed>
+ */
+function githubNativePullRequestPayload(array $overrides = []): array
+{
+    return array_replace_recursive([
+        'action' => 'opened',
+        'number' => 42,
+        'repository' => [
+            'id' => 1001,
+            'full_name' => '4techlead/api',
+        ],
+        'organization' => [
+            'login' => '4techlead',
+        ],
+        'sender' => [
+            'login' => 'lucas-github',
+        ],
+        'pull_request' => [
+            'id' => 424242,
+            'number' => 42,
+            'title' => 'DRIE-21919 entregar fluxo de cadastro',
+            'body' => 'Implementa cadastro da tarefa DRIE-21919.',
+            'state' => 'open',
+            'draft' => false,
+            'merged' => false,
+            'created_at' => '2026-08-27T10:00:00Z',
+            'updated_at' => '2026-08-27T10:05:00Z',
+            'closed_at' => null,
+            'merged_at' => null,
+            'user' => [
+                'login' => 'lucas-github',
+            ],
+            'head' => [
+                'ref' => 'feature/DRIE-21919-cadastro-oficina',
+                'sha' => 'abc123',
+            ],
+            'base' => [
+                'ref' => 'main',
+            ],
+        ],
+    ], $overrides);
+}
+
+/**
+ * @return array<string, mixed>
+ */
+function githubNativeReviewPayload(array $overrides = []): array
+{
+    return array_replace_recursive(githubNativePullRequestPayload([
+        'action' => 'submitted',
+        'sender' => [
+            'login' => 'reviewer-github',
+        ],
+        'review' => [
+            'id' => 9001,
+            'state' => 'changes_requested',
+            'submitted_at' => '2026-08-27T11:00:00Z',
+            'user' => [
+                'login' => 'reviewer-github',
+            ],
+        ],
+    ]), $overrides);
+}
+
+/**
+ * @return array<string, mixed>
+ */
+function githubNativeCheckRunPayload(array $overrides = []): array
+{
+    return array_replace_recursive([
+        'action' => 'completed',
+        'repository' => [
+            'id' => 1001,
+            'full_name' => '4techlead/api',
+        ],
+        'sender' => [
+            'login' => 'github-actions[bot]',
+        ],
+        'check_run' => [
+            'id' => 7001,
+            'name' => 'tests',
+            'status' => 'completed',
+            'conclusion' => 'failure',
+            'head_branch' => 'feature/DRIE-21919-cadastro-oficina',
+            'head_sha' => 'abc123',
+            'check_suite' => ['id' => 8001],
+            'pull_requests' => [
+                [
+                    'number' => 42,
+                ],
+            ],
+        ],
+    ], $overrides);
+}
+
+/**
+ * @return array<string, mixed>
+ */
+function githubNativeCheckSuitePayload(array $overrides = []): array
+{
+    return array_replace_recursive([
+        'action' => 'completed',
+        'repository' => [
+            'id' => 1001,
+            'full_name' => '4techlead/api',
+        ],
+        'sender' => [
+            'login' => 'github-actions[bot]',
+        ],
+        'check_suite' => [
+            'id' => 8001,
+            'status' => 'completed',
+            'conclusion' => 'success',
+            'head_branch' => 'feature/DRIE-21919-cadastro-oficina',
+            'head_sha' => 'abc123',
+            'created_at' => '2026-08-27T10:10:00Z',
+            'updated_at' => '2026-08-27T10:14:00Z',
+            'pull_requests' => [
+                [
+                    'number' => 42,
+                ],
+            ],
+        ],
+    ], $overrides);
+}
+
+/**
+ * @return array<string, mixed>
+ */
+function githubNativeWorkflowRunPayload(array $overrides = []): array
+{
+    return array_replace_recursive([
+        'action' => 'completed',
+        'repository' => [
+            'id' => 1001,
+            'full_name' => '4techlead/api',
+        ],
+        'sender' => [
+            'login' => 'github-actions[bot]',
+        ],
+        'workflow_run' => [
+            'id' => 9001,
+            'workflow_id' => 77,
+            'run_attempt' => 2,
+            'check_suite_id' => 8001,
+            'name' => 'CI',
+            'status' => 'completed',
+            'conclusion' => 'failure',
+            'run_started_at' => '2026-08-27T10:10:00Z',
+            'updated_at' => '2026-08-27T10:15:00Z',
+            'head_branch' => 'feature/DRIE-21919-cadastro-oficina',
+            'head_sha' => 'abc123',
+            'pull_requests' => [
+                [
+                    'number' => 42,
+                ],
+            ],
+        ],
+    ], $overrides);
+}
+
+/**
+ * @return array<string, mixed>
+ */
+function githubNativeDeploymentStatusPayload(array $overrides = []): array
+{
+    return array_replace_recursive([
+        'action' => 'created',
+        'repository' => [
+            'id' => 1001,
+            'full_name' => '4techlead/api',
+        ],
+        'sender' => [
+            'login' => 'github-actions[bot]',
+        ],
+        'deployment' => [
+            'id' => 3001,
+            'environment' => 'production',
+            'ref' => 'feature/DRIE-21919-cadastro-oficina',
+            'sha' => 'abc123',
+        ],
+        'deployment_status' => [
+            'id' => 3002,
+            'state' => 'failure',
+            'created_at' => '2026-08-27T10:16:00Z',
+            'updated_at' => '2026-08-27T10:16:30Z',
+        ],
+    ], $overrides);
+}
