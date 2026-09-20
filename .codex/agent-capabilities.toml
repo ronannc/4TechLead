@@ -1,0 +1,88 @@
+# Capability policy for project agents.
+# This file is governance metadata and is intentionally separate from the
+# runtime agent TOML files for backward compatibility.
+
+[policy]
+max_correction_cycles = 3
+reviewers_may_modify_source = false
+product_ai_may_access_repository = false
+
+[agents.fortechlead-team-orchestrator]
+role = "orchestrator"
+repositories = ["backend", "frontend"]
+can_read = true
+can_write_source = true
+can_execute_commands = true
+can_access_external_services = "controlled"
+
+[agents.fortechlead-backend-dev]
+role = "developer"
+repositories = ["backend"]
+can_read = true
+can_write_source = true
+can_execute_commands = true
+can_access_external_services = "controlled"
+
+[agents.fortechlead-frontend-dev]
+role = "developer"
+repositories = ["frontend"]
+can_read = true
+can_write_source = true
+can_execute_commands = true
+can_access_external_services = "controlled"
+
+[agents.fortechlead-api-contract-reviewer]
+role = "reviewer"
+repositories = ["backend", "frontend"]
+can_read = true
+can_write_source = false
+can_execute_commands = true
+can_access_external_services = "none"
+
+[agents.fortechlead-backend-qa]
+role = "qa"
+repositories = ["backend"]
+can_read = true
+can_write_source = false
+can_execute_commands = true
+can_access_external_services = "none"
+
+[agents.fortechlead-frontend-qa]
+role = "qa"
+repositories = ["frontend"]
+can_read = true
+can_write_source = false
+can_execute_commands = true
+can_access_external_services = "none"
+
+[agents.fortechlead-backend-security]
+role = "reviewer"
+repositories = ["backend"]
+can_read = true
+can_write_source = false
+can_execute_commands = true
+can_access_external_services = "none"
+
+[agents.fortechlead-frontend-security]
+role = "reviewer"
+repositories = ["frontend"]
+can_read = true
+can_write_source = false
+can_execute_commands = true
+can_access_external_services = "none"
+
+[agents.fortechlead-backend-performance]
+role = "reviewer"
+repositories = ["backend"]
+can_read = true
+can_write_source = false
+can_execute_commands = true
+can_access_external_services = "none"
+
+[agents.fortechlead-frontend-performance]
+role = "reviewer"
+repositories = ["frontend"]
+can_read = true
+can_write_source = false
+can_execute_commands = true
+can_access_external_services = "none"

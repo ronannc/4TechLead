@@ -1,0 +1,6 @@
+[mcp_servers.laravel-boost]
+command = "bash"
+args = [
+    "-c",
+    'cd "$CLAUDE_PROJECT_DIR/backend" && exec php artisan boost:mcp',
+]
