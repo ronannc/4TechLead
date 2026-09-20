@@ -10,7 +10,11 @@ final class DeliveryMetricIngestService
 {
     public function ingest(IntegrationWebhookEvent $event): void
     {
-        if ($event->person_id !== null) {
+        // ClickUp atribui KPIs aos responsáveis da tarefa (task_assignees),
+        // nunca à pessoa que disparou ou moveu o webhook.
+        $isClickUpEvent = ($event->normalized_payload['source'] ?? null) === 'clickup';
+
+        if (! $isClickUpEvent && $event->person_id !== null) {
             foreach ($this->metricsFor($event) as $metric) {
                 $this->persist($event, $metric);
             }
