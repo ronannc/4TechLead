@@ -61,6 +61,17 @@ final class ClickUpWebhookIngestService
             'user_name' => data_get($event->payload, 'actor.name'),
             'task_url' => data_get($event->payload, 'task.url'),
         ], $event->normalized_payload ?? []);
+        $rawPayload = (array) ($event->raw_payload ?? []);
+
+        if ($rawPayload !== []) {
+            // Eventos recebidos antes da correção podem ter perdido os
+            // responsáveis na normalização, embora eles estejam no payload
+            // original retido. Recuperamos esses dados antes do enriquecimento.
+            $normalizedPayload = $this->mergeMissingTaskSnapshot(
+                $normalizedPayload,
+                $this->normalize($rawPayload),
+            );
+        }
         $taskId = $normalizedPayload['task_id'] ?? data_get($event->payload, 'task.id');
 
         $snapshot = $taskId === null || $taskId === ''
