@@ -172,12 +172,12 @@ final class ClickUpWebhookIngestService
                     'person_id' => $personId,
                     'event_type' => $normalizedPayload['event_type'],
                     'external_actor_code' => $normalizedPayload['external_actor_code'],
-                    'status' => $personId === null ? 'unmapped_person' : 'processed',
-                    'processing_reason' => $personId === null
-                        ? 'unmapped_person'
-                        : 'normalized',
+                    // ClickUp task KPIs are attributed to task assignees, not to
+                    // the person who triggered or moved the task.
+                    'status' => 'processed',
+                    'processing_reason' => 'normalized',
                     'projection_status' => 'pending',
-                    'failure_reason' => $personId === null ? 'No active person mapping for external code.' : null,
+                    'failure_reason' => null,
                     'payload' => $this->processedPayload($normalizedPayload),
                     'raw_payload' => $payload,
                     'payload_hash' => hash('sha256', $rawBody),

@@ -327,7 +327,7 @@ it('receives a clickup automation webhook and stores only the processed payload 
             ->where('data.event_id', $eventId)
             ->where('data.event_type', 'clickup_automation')
             ->where('data.external_actor_code', null)
-            ->where('data.status', 'unmapped_person')
+            ->where('data.status', 'processed')
             ->where('data.payload.event_type', 'clickup_automation')
             ->where('data.payload.task.id', '86ak1xv8h')
             ->where('data.payload.task.custom_id', 'DRIE-21919')
@@ -627,6 +627,7 @@ it('uses root assigned users as task assignees without inventing the webhook act
     ])->assertOk()
         ->assertJsonPath('data.external_actor_code', null)
         ->assertJsonPath('data.person_id', null)
+        ->assertJsonPath('data.status', 'processed')
         ->assertJsonPath('data.normalized_payload.task_assignees.0.id', '106048330')
         ->assertJsonPath('data.normalized_payload.task_assignees.1.id', '106048329');
 });
