@@ -1,3 +1,4 @@
+import '../models/delivery_case_audit.dart';
 import '../models/integration_models.dart';
 import '../services/integration_service.dart';
 
@@ -89,6 +90,12 @@ class IntegrationRepository {
     return IntegrationWebhookEvent.fromJson(
       json['data'] as Map<String, dynamic>,
     );
+  }
+
+  Future<DeliveryCaseAudit> getDeliveryCase(int deliveryCaseId) async {
+    final json = await _service.getDeliveryCase(deliveryCaseId);
+
+    return DeliveryCaseAudit.fromJson(json['data'] as Map<String, dynamic>);
   }
 
   Future<IntegrationWebhookEvent> enrichWebhookEvent(int eventId) async {

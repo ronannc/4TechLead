@@ -71,6 +71,12 @@ final class ClickUpWebhookIngestService
         $event->forceFill([
             'payload' => $this->processedPayload($normalizedPayload),
             'normalized_payload' => $normalizedPayload,
+            'task_ref' => $this->taskReferenceFrom($normalizedPayload),
+            'occurred_at' => $normalizedPayload['occurred_at'] ?? $event->received_at,
+            'enrichment_status' => $snapshot['task_enrichment_status'] ?? 'partial',
+            'enrichment_attempts' => $event->enrichment_attempts + 1,
+            'enriched_at' => now(),
+            'enrichment_error' => $snapshot['task_enrichment_error'] ?? null,
         ])->save();
 
         if (($snapshot['task_enrichment_status'] ?? null) === 'enriched') {
@@ -133,7 +139,14 @@ final class ClickUpWebhookIngestService
             ->first();
 
         if ($existingEvent !== null) {
-            app(DeliveryCaseProjector::class)->project($existingEvent);
+            $deliveryCase = app(DeliveryCaseProjector::class)->project($existingEvent);
+            $existingEvent->forceFill([
+                'projection_status' => $deliveryCase === null ? 'unmatched' : 'projected',
+                'processing_reason' => $deliveryCase === null
+                    ? 'missing_or_ambiguous_task_reference'
+                    : 'task_projected',
+                'processed_at' => now(),
+            ])->save();
             app(DeliveryMetricIngestService::class)->ingest($existingEvent);
 
             return $existingEvent->refresh();
@@ -146,7 +159,7 @@ final class ClickUpWebhookIngestService
             $normalizedPayload['task_enrichment_error'] = class_basename($exception);
         }
 
-        $event = DB::transaction(function () use ($integrationSystem, $normalizedPayload, $rawBody): IntegrationWebhookEvent {
+        $event = DB::transaction(function () use ($integrationSystem, $normalizedPayload, $rawBody, $payload): IntegrationWebhookEvent {
             $personId = $this->personIdFor($integrationSystem, $normalizedPayload['external_actor_code']);
 
             $event = IntegrationWebhookEvent::query()->createOrFirst(
@@ -160,12 +173,25 @@ final class ClickUpWebhookIngestService
                     'event_type' => $normalizedPayload['event_type'],
                     'external_actor_code' => $normalizedPayload['external_actor_code'],
                     'status' => $personId === null ? 'unmapped_person' : 'processed',
+                    'processing_reason' => $personId === null
+                        ? 'unmapped_person'
+                        : 'normalized',
+                    'projection_status' => 'pending',
                     'failure_reason' => $personId === null ? 'No active person mapping for external code.' : null,
                     'payload' => $this->processedPayload($normalizedPayload),
+                    'raw_payload' => $payload,
                     'payload_hash' => hash('sha256', $rawBody),
                     'payload_size_bytes' => strlen($rawBody),
                     'normalized_payload' => $normalizedPayload,
                     'received_at' => now(),
+                    'processed_at' => now(),
+                    'occurred_at' => $normalizedPayload['occurred_at'] ?? now(),
+                    'task_ref' => $this->taskReferenceFrom($normalizedPayload),
+                    'enrichment_status' => $normalizedPayload['task_enrichment_status'] ?? 'partial',
+                    'enrichment_attempts' => 1,
+                    'enriched_at' => now(),
+                    'enrichment_error' => $normalizedPayload['task_enrichment_error'] ?? null,
+                    'retention_until' => now()->addDays(14),
                 ],
             );
 
@@ -176,10 +202,30 @@ final class ClickUpWebhookIngestService
             return $event->refresh();
         });
 
-        app(DeliveryCaseProjector::class)->project($event);
+        $deliveryCase = app(DeliveryCaseProjector::class)->project($event);
+        $event->forceFill([
+            'projection_status' => $deliveryCase === null ? 'unmatched' : 'projected',
+            'processing_reason' => $deliveryCase === null
+                ? 'missing_or_ambiguous_task_reference'
+                : 'task_projected',
+            'processed_at' => now(),
+        ])->save();
         app(DeliveryMetricIngestService::class)->ingest($event);
 
         return $event->refresh();
+    }
+
+    /**
+     * @param  array<string, mixed>  $normalizedPayload
+     */
+    private function taskReferenceFrom(array $normalizedPayload): ?string
+    {
+        $reference = data_get($normalizedPayload, 'task_custom_id')
+            ?? Arr::first((array) data_get($normalizedPayload, 'task_refs', []));
+
+        return is_string($reference) && trim($reference) !== ''
+            ? strtoupper(trim($reference))
+            : null;
     }
 
     protected function integrationSystem(string $token): IntegrationSystem

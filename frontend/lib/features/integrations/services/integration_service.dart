@@ -100,6 +100,10 @@ class IntegrationService {
     return _get('/integration-webhook-events/$eventId');
   }
 
+  Future<Map<String, dynamic>> getDeliveryCase(int deliveryCaseId) {
+    return _get('/delivery-cases/$deliveryCaseId');
+  }
+
   Future<Map<String, dynamic>> enrichWebhookEvent(int eventId) {
     return _post('/integration-webhook-events/$eventId/enrich', data: const {});
   }

@@ -61,6 +61,7 @@ final class DeliveryCaseProjector
             $this->projectStatusMilestones($deliveryCase, $events);
             $this->projectTagConfirmations($deliveryCase, $events);
             $this->projectParticipants($deliveryCase, $events);
+            app(DeliveryCaseHistoryProjector::class)->project($deliveryCase, $events);
 
             return $deliveryCase->refresh();
         });

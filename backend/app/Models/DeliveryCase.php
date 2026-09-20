@@ -9,13 +9,16 @@ use Database\Factories\DeliveryCaseFactory;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
 #[Fillable([
     'tenant_id',
     'task_ref',
+    'clickup_task_id',
     'title',
     'current_stage',
+    'current_assignee_id',
     'sprint_ref',
     'story_points',
     'first_seen_at',
@@ -34,6 +37,38 @@ class DeliveryCase extends Model
     public function participants(): HasMany
     {
         return $this->hasMany(DeliveryCaseParticipant::class);
+    }
+
+    /**
+     * @return BelongsTo<Person, $this>
+     */
+    public function currentAssignee(): BelongsTo
+    {
+        return $this->belongsTo(Person::class, 'current_assignee_id');
+    }
+
+    /**
+     * @return HasMany<DeliveryCaseStatusHistory, $this>
+     */
+    public function statusHistory(): HasMany
+    {
+        return $this->hasMany(DeliveryCaseStatusHistory::class)->oldest('occurred_at')->oldest('id');
+    }
+
+    /**
+     * @return HasMany<DeliveryCaseAssignmentHistory, $this>
+     */
+    public function assignmentHistory(): HasMany
+    {
+        return $this->hasMany(DeliveryCaseAssignmentHistory::class)->oldest('assigned_at')->oldest('id');
+    }
+
+    /**
+     * @return HasMany<DeliveryCaseActivity, $this>
+     */
+    public function activities(): HasMany
+    {
+        return $this->hasMany(DeliveryCaseActivity::class)->oldest('occurred_at')->oldest('id');
     }
 
     /**
@@ -61,6 +96,7 @@ class DeliveryCase extends Model
     {
         return [
             'current_stage' => DeliveryStage::class,
+            'current_assignee_id' => 'integer',
             'story_points' => 'decimal:2',
             'first_seen_at' => 'datetime',
             'last_activity_at' => 'datetime',

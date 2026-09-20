@@ -20,14 +20,25 @@ use Illuminate\Database\Eloquent\SoftDeletes;
     'person_id',
     'event_id',
     'event_type',
+    'task_ref',
     'external_actor_code',
     'status',
+    'processing_reason',
+    'projection_status',
     'failure_reason',
     'payload',
+    'raw_payload',
     'payload_hash',
     'payload_size_bytes',
     'normalized_payload',
     'received_at',
+    'processed_at',
+    'occurred_at',
+    'enrichment_status',
+    'enrichment_attempts',
+    'enriched_at',
+    'enrichment_error',
+    'retention_until',
 ])]
 class IntegrationWebhookEvent extends Model
 {
@@ -65,9 +76,15 @@ class IntegrationWebhookEvent extends Model
     {
         return [
             'payload' => 'array',
+            'raw_payload' => 'array',
             'payload_size_bytes' => 'integer',
             'normalized_payload' => 'array',
             'received_at' => 'datetime',
+            'processed_at' => 'datetime',
+            'occurred_at' => 'datetime',
+            'enrichment_attempts' => 'integer',
+            'enriched_at' => 'datetime',
+            'retention_until' => 'datetime',
         ];
     }
 

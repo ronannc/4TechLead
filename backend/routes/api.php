@@ -5,6 +5,7 @@ use App\Http\Controllers\Api\V1\AuthenticatedPersonController;
 use App\Http\Controllers\Api\V1\ClickUpWebhookController;
 use App\Http\Controllers\Api\V1\DailyMeetingController;
 use App\Http\Controllers\Api\V1\DailyMeetingEntryController;
+use App\Http\Controllers\Api\V1\DeliveryCaseController;
 use App\Http\Controllers\Api\V1\DeliveryKpiController;
 use App\Http\Controllers\Api\V1\DevelopmentPlanController;
 use App\Http\Controllers\Api\V1\DevelopmentPlanItemController;
@@ -63,6 +64,7 @@ Route::middleware('auth:sanctum')->group(function (): void {
     Route::apiResource('person-external-identities', PersonExternalIdentityController::class);
     Route::apiResource('person-delivery-metrics', PersonDeliveryMetricController::class)->only(['index', 'show']);
     Route::get('delivery-kpis', DeliveryKpiController::class);
+    Route::get('delivery-cases/{deliveryCase}', [DeliveryCaseController::class, 'show']);
     Route::apiResource('notifications', ExternalNotificationController::class)
         ->parameters(['notifications' => 'notification'])
         ->only(['index', 'show']);

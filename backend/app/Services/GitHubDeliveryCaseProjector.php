@@ -56,6 +56,7 @@ final class GitHubDeliveryCaseProjector
             $this->projectExternalLinks($deliveryCase, $events);
             $this->projectMilestones($deliveryCase, $events);
             $this->projectParticipants($deliveryCase, $events);
+            app(DeliveryCaseHistoryProjector::class)->project($deliveryCase, $events);
 
             return $deliveryCase->refresh();
         });
