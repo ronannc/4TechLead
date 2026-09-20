@@ -1,0 +1,221 @@
+import 'package:flutter_test/flutter_test.dart';
+import 'package:for_tech_lead/core/network/api_exception.dart';
+import 'package:for_tech_lead/core/viewmodels/base_view_model.dart';
+import 'package:for_tech_lead/features/integrations/models/integration_models.dart';
+import 'package:for_tech_lead/features/integrations/repositories/integration_repository.dart';
+import 'package:for_tech_lead/features/integrations/viewmodels/integrations_view_model.dart';
+import 'package:for_tech_lead/features/people/repositories/person_repository.dart';
+import 'package:mocktail/mocktail.dart';
+
+class _MockIntegrationRepository extends Mock
+    implements IntegrationRepository {}
+
+class _MockPersonRepository extends Mock implements PersonRepository {}
+
+void main() {
+  late _MockIntegrationRepository integrationRepository;
+  late _MockPersonRepository personRepository;
+  late IntegrationsViewModel viewModel;
+
+  const system = IntegrationSystem(
+    id: 1,
+    name: 'GitHub Produto',
+    provider: 'github',
+    tokenPrefix: 'abc12345',
+    active: true,
+  );
+
+  setUp(() {
+    integrationRepository = _MockIntegrationRepository();
+    personRepository = _MockPersonRepository();
+    viewModel = IntegrationsViewModel(integrationRepository, personRepository);
+  });
+
+  test(
+    'createSystem() keeps loaded data visible when the mutation fails',
+    () async {
+      when(
+        integrationRepository.getSystems,
+      ).thenAnswer((_) async => const [system]);
+      when(
+        () => personRepository.getPeople(perPage: 100),
+      ).thenAnswer((_) async => const []);
+      when(
+        integrationRepository.getExternalIdentities,
+      ).thenAnswer((_) async => const []);
+      when(() => integrationRepository.getDeliveryMetrics(page: 1)).thenAnswer(
+        (_) async => const DeliveryMetricsPage(
+          items: [],
+          currentPage: 1,
+          lastPage: 1,
+          total: 0,
+        ),
+      );
+      when(
+        () => integrationRepository.getWebhookEvents(
+          page: 1,
+          search: '',
+          integrationSystemId: null,
+          personId: null,
+          status: null,
+          unmapped: false,
+          withFailure: false,
+          orderDirection: 'desc',
+        ),
+      ).thenAnswer(
+        (_) async => const WebhookEventsPage(
+          items: [],
+          currentPage: 1,
+          lastPage: 1,
+          total: 0,
+        ),
+      );
+      await viewModel.load();
+
+      when(
+        () => integrationRepository.createSystem(
+          name: 'ClickUp',
+          provider: 'clickup',
+          description: null,
+          providerApiToken: null,
+        ),
+      ).thenThrow(
+        ValidationException({
+          'name': ['Nome já cadastrado.'],
+        }),
+      );
+
+      final saved = await viewModel.createSystem(
+        name: 'ClickUp',
+        provider: 'clickup',
+      );
+
+      expect(saved, isFalse);
+      expect(viewModel.state, ViewState.loaded);
+      expect(viewModel.systems, const [system]);
+      expect(viewModel.actionErrorMessage, 'Nome já cadastrado.');
+      expect(viewModel.isMutating, isFalse);
+    },
+  );
+
+  test('regenerateSystemToken() exposes the new one time token', () async {
+    const rotatedSystem = IntegrationSystem(
+      id: 1,
+      name: 'GitHub Produto',
+      provider: 'github',
+      tokenPrefix: 'new12345',
+      webhookToken: 'new-secret-token',
+      webhookUrl: 'https://app.test/api/v1/github-webhooks',
+      active: true,
+    );
+
+    when(
+      () => integrationRepository.regenerateSystemToken(1),
+    ).thenAnswer((_) async => rotatedSystem);
+    when(
+      integrationRepository.getSystems,
+    ).thenAnswer((_) async => const [rotatedSystem]);
+
+    final saved = await viewModel.regenerateSystemToken(1);
+
+    expect(saved, isTrue);
+    expect(viewModel.latestToken, 'new-secret-token');
+    expect(
+      viewModel.latestWebhookUrl,
+      'https://app.test/api/v1/github-webhooks',
+    );
+    expect(viewModel.latestProvider, 'github');
+    expect(viewModel.systems.single.tokenPrefix, 'new12345');
+    expect(viewModel.isMutating, isFalse);
+  });
+
+  test(
+    'enrichWebhookEvent() updates the selected event and event list',
+    () async {
+      const originalEvent = IntegrationWebhookEvent(
+        id: 42,
+        integrationSystemId: 2,
+        eventId: 'clickup-event-42',
+        eventType: 'taskUpdated',
+        status: 'processed',
+        payload: {
+          'task': {'id': 'task-42'},
+        },
+      );
+      const enrichedEvent = IntegrationWebhookEvent(
+        id: 42,
+        integrationSystemId: 2,
+        eventId: 'clickup-event-42',
+        eventType: 'taskUpdated',
+        status: 'processed',
+        payload: {
+          'task': {'id': 'task-42', 'name': 'Task enriquecida'},
+        },
+        normalizedPayload: {'task_enrichment_status': 'enriched'},
+      );
+      viewModel.webhookEvents = [originalEvent];
+      viewModel.selectedWebhookEvent = originalEvent;
+      when(
+        () => integrationRepository.enrichWebhookEvent(42),
+      ).thenAnswer((_) async => enrichedEvent);
+      when(() => integrationRepository.getDeliveryMetrics(page: 1)).thenAnswer(
+        (_) async => const DeliveryMetricsPage(
+          items: [],
+          currentPage: 1,
+          lastPage: 1,
+          total: 0,
+        ),
+      );
+
+      final succeeded = await viewModel.enrichWebhookEvent(42);
+
+      expect(succeeded, isTrue);
+      expect(
+        viewModel
+            .selectedWebhookEvent
+            ?.normalizedPayload?['task_enrichment_status'],
+        'enriched',
+      );
+    expect(
+      (viewModel.webhookEvents.single.payload['task'] as Map<String, dynamic>)[
+        'name'
+      ],
+      'Task enriquecida',
+    );
+      expect(viewModel.isMutating, isFalse);
+    },
+  );
+
+  test(
+    'deleteSystem() clears the one time token state and reloads systems',
+    () async {
+      const remainingSystem = IntegrationSystem(
+        id: 1,
+        name: 'ClickUp Produto',
+        provider: 'clickup',
+        tokenPrefix: 'remaining',
+        hasProviderApiToken: false,
+        active: true,
+      );
+
+      viewModel.latestToken = 'old-token';
+      viewModel.latestWebhookUrl = 'https://app.test/api/v1/clickup-webhooks';
+      viewModel.latestProvider = 'clickup';
+      when(
+        () => integrationRepository.deleteSystem(1),
+      ).thenAnswer((_) async {});
+      when(
+        integrationRepository.getSystems,
+      ).thenAnswer((_) async => const [remainingSystem]);
+
+      final saved = await viewModel.deleteSystem(1);
+
+      expect(saved, isTrue);
+      expect(viewModel.latestToken, isNull);
+      expect(viewModel.latestWebhookUrl, isNull);
+      expect(viewModel.latestProvider, isNull);
+      expect(viewModel.systems.single.id, 1);
+      expect(viewModel.isMutating, isFalse);
+    },
+  );
+}

@@ -1,0 +1,2455 @@
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:go_router/go_router.dart';
+import 'package:intl/intl.dart';
+import 'package:provider/provider.dart';
+
+import '../../../core/routing/route_paths.dart';
+import '../../../core/theme/app_radius.dart';
+import '../../../core/theme/app_spacing.dart';
+import '../../../core/viewmodels/base_view_model.dart';
+import '../../../core/widgets/buttons/app_dialog_actions.dart';
+import '../../../core/widgets/buttons/app_primary_button.dart';
+import '../../../core/widgets/cards/app_summary_card.dart';
+import '../../../core/widgets/data/app_key_value_row.dart';
+import '../../../core/widgets/states/error_view.dart';
+import '../../../core/widgets/states/loading_view.dart';
+import '../../daily/screens/person_daily_section.dart';
+import '../../integrations/models/integration_models.dart';
+import '../models/person.dart';
+import '../models/person_growth_models.dart';
+import '../viewmodels/person_detail_view_model.dart';
+import '../viewmodels/person_growth_view_model.dart';
+
+enum _PersonTab { info, oneOnOne, pdi, analysis }
+
+enum _FocusedFlow { pdi }
+
+enum _OneOnOneView { suggestions, history }
+
+enum _PdiView { create, suggestions, tracking }
+
+extension on _PdiView {
+  String get label {
+    return switch (this) {
+      _PdiView.create => 'Criar',
+      _PdiView.suggestions => 'Sugestões',
+      _PdiView.tracking => 'Acompanhar',
+    };
+  }
+
+  IconData get icon {
+    return switch (this) {
+      _PdiView.create => Icons.add_task_outlined,
+      _PdiView.suggestions => Icons.lightbulb_outline,
+      _PdiView.tracking => Icons.fact_check_outlined,
+    };
+  }
+}
+
+extension on _OneOnOneView {
+  String get label {
+    return switch (this) {
+      _OneOnOneView.suggestions => 'Sugestões',
+      _OneOnOneView.history => 'Histórico',
+    };
+  }
+
+  IconData get icon {
+    return switch (this) {
+      _OneOnOneView.suggestions => Icons.auto_awesome_outlined,
+      _OneOnOneView.history => Icons.history_outlined,
+    };
+  }
+}
+
+extension on _PersonTab {
+  String get label {
+    return switch (this) {
+      _PersonTab.info => 'Geral',
+      _PersonTab.oneOnOne => '1:1',
+      _PersonTab.pdi => 'PDI',
+      _PersonTab.analysis => 'KPIs',
+    };
+  }
+
+  IconData get icon {
+    return switch (this) {
+      _PersonTab.info => Icons.badge_outlined,
+      _PersonTab.oneOnOne => Icons.forum_outlined,
+      _PersonTab.pdi => Icons.trending_up,
+      _PersonTab.analysis => Icons.insights_outlined,
+    };
+  }
+}
+
+class PersonDetailBody extends StatefulWidget {
+  const PersonDetailBody({super.key, required this.canGenerateAccessToken});
+
+  final bool canGenerateAccessToken;
+
+  @override
+  State<PersonDetailBody> createState() => _PersonDetailBodyState();
+}
+
+class _PersonDetailBodyState extends State<PersonDetailBody> {
+  final _sessionSearchController = TextEditingController();
+  final _planTitleController = TextEditingController();
+  final _planSummaryController = TextEditingController();
+  final _planTargetRoleController = TextEditingController();
+
+  var _tab = _PersonTab.info;
+  var _oneOnOneView = _OneOnOneView.history;
+  var _pdiView = _PdiView.tracking;
+  _FocusedFlow? _focusedFlow;
+
+  @override
+  void dispose() {
+    _sessionSearchController.dispose();
+    _planTitleController.dispose();
+    _planSummaryController.dispose();
+    _planTargetRoleController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return PopScope(
+      canPop: _focusedFlow == null,
+      onPopInvokedWithResult: (didPop, result) {
+        if (!didPop && _focusedFlow != null) {
+          _closeFocusedFlow();
+        }
+      },
+      child: Selector<PersonDetailViewModel, Person?>(
+        selector: (_, vm) => vm.person,
+        builder: (context, person, _) {
+          if (person == null) {
+            return const SizedBox.shrink();
+          }
+
+          return Consumer<PersonGrowthViewModel>(
+            builder: (context, growth, _) {
+              if (_focusedFlow != null) {
+                return _focusedFlowBody(context, growth);
+              }
+
+              return _PersonDetailScrollView(
+                children: [
+                  _PersonHeader(
+                    person: person,
+                    canGenerateAccessToken: widget.canGenerateAccessToken,
+                  ),
+                  Selector<PersonDetailViewModel, String?>(
+                    selector: (_, vm) => vm.invitationToken,
+                    builder: (context, token, _) {
+                      if (token == null) {
+                        return const SizedBox.shrink();
+                      }
+
+                      return Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const SizedBox(height: AppSpacing.md),
+                          _InvitationTokenBanner(token: token),
+                        ],
+                      );
+                    },
+                  ),
+                  const SizedBox(height: AppSpacing.md),
+                  _PersonTabSelector(
+                    selected: _tab,
+                    canShowOneOnOne: widget.canGenerateAccessToken,
+                    onChanged: (value) {
+                      if (!widget.canGenerateAccessToken &&
+                          value == _PersonTab.oneOnOne) {
+                        return;
+                      }
+
+                      setState(() => _tab = value);
+                      switch (value) {
+                        case _PersonTab.info:
+                          break;
+                        case _PersonTab.oneOnOne:
+                          growth.loadOneOnOneHistory();
+                          break;
+                        case _PersonTab.pdi:
+                          growth.loadPdiTracking();
+                          break;
+                        case _PersonTab.analysis:
+                          growth.loadAnalysis();
+                          break;
+                      }
+                    },
+                  ),
+                  const SizedBox(height: AppSpacing.md),
+                  if (growth.actionErrorMessage != null) ...[
+                    _ActionErrorBanner(
+                      message: growth.actionErrorMessage!,
+                      onDismiss: growth.clearActionError,
+                    ),
+                    const SizedBox(height: AppSpacing.md),
+                  ],
+                  if (_tab != _PersonTab.info &&
+                      growth.state == ViewState.loading &&
+                      growth.templates.isEmpty &&
+                      growth.sessions.isEmpty &&
+                      growth.plans.isEmpty &&
+                      growth.deliveryMetrics.isEmpty &&
+                      growth.suggestions == null)
+                    const LoadingView()
+                  else if (_tab != _PersonTab.info &&
+                      growth.state == ViewState.error &&
+                      growth.templates.isEmpty &&
+                      growth.sessions.isEmpty &&
+                      growth.plans.isEmpty &&
+                      growth.deliveryMetrics.isEmpty &&
+                      growth.suggestions == null)
+                    ErrorView(
+                      message: growth.errorMessage ?? 'Algo deu errado.',
+                      onRetry: () {
+                        switch (_tab) {
+                          case _PersonTab.info:
+                            break;
+                          case _PersonTab.oneOnOne:
+                            growth.loadOneOnOneHistory();
+                            break;
+                          case _PersonTab.pdi:
+                            growth.loadPdiTracking();
+                            break;
+                          case _PersonTab.analysis:
+                            growth.loadAnalysis();
+                            break;
+                        }
+                      },
+                    )
+                  else
+                    _tabBody(context, person, growth),
+                ],
+              );
+            },
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _tabBody(
+    BuildContext context,
+    Person person,
+    PersonGrowthViewModel growth,
+  ) {
+    return switch (_tab) {
+      _PersonTab.info => _PersonInfoTab(person: person),
+      _PersonTab.oneOnOne => _OneOnOneTab(
+        growth: growth,
+        selectedView: _oneOnOneView,
+        canManageGrowth: widget.canGenerateAccessToken,
+        onViewChanged: (value) {
+          setState(() => _oneOnOneView = value);
+          switch (value) {
+            case _OneOnOneView.history:
+              growth.loadOneOnOneHistory();
+              break;
+            case _OneOnOneView.suggestions:
+              growth.loadOneOnOneSuggestions();
+              break;
+          }
+        },
+        sessionSearchController: _sessionSearchController,
+        onPlanSession: () => context.go(
+          RoutePaths.oneOnOnesPath(personId: '${person.id}', tab: 'execute'),
+        ),
+      ),
+      _PersonTab.pdi => _PdiTab(
+        growth: growth,
+        selectedView: _pdiView,
+        canManageGrowth: widget.canGenerateAccessToken,
+        onViewChanged: (value) {
+          setState(() => _pdiView = value);
+          switch (value) {
+            case _PdiView.create:
+            case _PdiView.tracking:
+              growth.loadPdiTracking();
+              break;
+            case _PdiView.suggestions:
+              growth.loadPdiSuggestions();
+              break;
+          }
+        },
+        onCreateItem: (plan) => _showPlanItemDialog(context, growth, plan),
+        onEditPlan: (plan) => _showEditPlanDialog(context, growth, plan),
+        onDeletePlan: (plan) => _deletePlan(context, growth, plan),
+        onCreatePlan: () => _openFocusedFlow(_FocusedFlow.pdi),
+      ),
+      _PersonTab.analysis => _AnalysisTab(person: person, growth: growth),
+    };
+  }
+
+  Widget _focusedFlowBody(BuildContext context, PersonGrowthViewModel growth) {
+    final flow = _focusedFlow!;
+
+    return _FocusedFlowView(
+      title: switch (flow) {
+        _FocusedFlow.pdi => 'Novo PDI',
+      },
+      subtitle: switch (flow) {
+        _FocusedFlow.pdi => 'Transforme uma evolução em plano de ação.',
+      },
+      onBack: _closeFocusedFlow,
+      actionErrorMessage: growth.actionErrorMessage,
+      onDismissActionError: growth.clearActionError,
+      child: switch (flow) {
+        _FocusedFlow.pdi => _PdiCreateView(
+          titleController: _planTitleController,
+          summaryController: _planSummaryController,
+          targetRoleController: _planTargetRoleController,
+          loading: growth.isMutating,
+          onCreatePlan: () => _createPlan(growth),
+        ),
+      },
+    );
+  }
+
+  void _openFocusedFlow(_FocusedFlow flow) {
+    setState(() => _focusedFlow = flow);
+  }
+
+  void _closeFocusedFlow() {
+    setState(() => _focusedFlow = null);
+  }
+
+  Future<void> _createPlan(PersonGrowthViewModel growth) async {
+    final title = _planTitleController.text.trim();
+    if (title.isEmpty) {
+      return;
+    }
+
+    final saved = await growth.createPlan(
+      title: title,
+      summary: _nullable(_planSummaryController.text),
+      targetRole: _nullable(_planTargetRoleController.text),
+    );
+    if (!saved) {
+      return;
+    }
+
+    _planTitleController.clear();
+    _planSummaryController.clear();
+    _planTargetRoleController.clear();
+    if (mounted) {
+      setState(() {
+        _focusedFlow = null;
+        _pdiView = _PdiView.tracking;
+      });
+    }
+  }
+
+  Future<void> _deletePlan(
+    BuildContext context,
+    PersonGrowthViewModel growth,
+    DevelopmentPlan plan,
+  ) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Excluir PDI?'),
+        content: Text(
+          'O plano "${plan.title}" e todas as suas ações serão removidos.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Cancelar'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Excluir'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true) {
+      await growth.deletePlan(plan.id);
+    }
+  }
+
+  Future<void> _showPlanItemDialog(
+    BuildContext context,
+    PersonGrowthViewModel growth,
+    DevelopmentPlan plan,
+  ) async {
+    final titleController = TextEditingController();
+    final competencyController = TextEditingController();
+    final evidenceController = TextEditingController();
+
+    await _showEditorSheet(
+      context: context,
+      title: 'Nova ação do PDI',
+      subtitle:
+          'Defina uma prática concreta e como a evolução será comprovada.',
+      primaryLabel: 'Adicionar ação',
+      children: [
+        TextField(
+          controller: titleController,
+          decoration: const InputDecoration(
+            labelText: 'Ação',
+            helperText:
+                'Entrega objetiva. Ex.: conduzir o desenho técnico do próximo card.',
+          ),
+        ),
+        TextField(
+          controller: competencyController,
+          decoration: const InputDecoration(
+            labelText: 'Competência',
+            helperText:
+                'Habilidade trabalhada. Ex.: comunicação, arquitetura, autonomia.',
+          ),
+        ),
+        TextField(
+          controller: evidenceController,
+          minLines: 2,
+          maxLines: 4,
+          decoration: const InputDecoration(
+            labelText: 'Evidência esperada',
+            helperText:
+                'Como a evolução será percebida? Ex.: decisão registrada e validada.',
+          ),
+        ),
+      ],
+      onSubmit: (sheetContext) async {
+        if (titleController.text.trim().isEmpty) {
+          return;
+        }
+        await growth.createPlanItem(
+          planId: plan.id,
+          title: titleController.text.trim(),
+          competency: _nullable(competencyController.text),
+          evidence: _nullable(evidenceController.text),
+        );
+        if (sheetContext.mounted) {
+          Navigator.pop(sheetContext);
+        }
+      },
+    );
+
+    titleController.dispose();
+    competencyController.dispose();
+    evidenceController.dispose();
+  }
+
+  Future<void> _showEditPlanDialog(
+    BuildContext context,
+    PersonGrowthViewModel growth,
+    DevelopmentPlan plan,
+  ) async {
+    final titleController = TextEditingController(text: plan.title);
+    final summaryController = TextEditingController(text: plan.summary);
+    final statusController = TextEditingController(text: plan.status);
+    final progressController = TextEditingController(text: '${plan.progress}');
+
+    await _showEditorSheet(
+      context: context,
+      title: 'Editar PDI',
+      subtitle: 'Ajuste o objetivo do plano e reflita o acompanhamento atual.',
+      primaryLabel: 'Atualizar PDI',
+      children: [
+        TextField(
+          controller: titleController,
+          decoration: const InputDecoration(
+            labelText: 'Título',
+            helperText: 'Nome curto do plano. Ex.: Evoluir autonomia técnica.',
+          ),
+        ),
+        TextField(
+          controller: summaryController,
+          decoration: const InputDecoration(
+            labelText: 'Resumo',
+            helperText:
+                'Explique o contexto, lacuna observada e resultado esperado.',
+          ),
+        ),
+        TextField(
+          controller: statusController,
+          decoration: const InputDecoration(
+            labelText: 'Status',
+            helperText: 'Use algo simples: active, paused, completed.',
+          ),
+        ),
+        TextField(
+          controller: progressController,
+          keyboardType: TextInputType.number,
+          decoration: const InputDecoration(
+            labelText: 'Progresso 0-100',
+            helperText:
+                'Atualize conforme ações concluídas, evidências e mudança de comportamento.',
+          ),
+        ),
+      ],
+      onSubmit: (sheetContext) async {
+        await growth.updatePlan(
+          id: plan.id,
+          title: titleController.text.trim(),
+          summary: _nullable(summaryController.text),
+          status: statusController.text.trim(),
+          progress: int.tryParse(progressController.text.trim()),
+        );
+        if (sheetContext.mounted) {
+          Navigator.pop(sheetContext);
+        }
+      },
+    );
+
+    titleController.dispose();
+    summaryController.dispose();
+    statusController.dispose();
+    progressController.dispose();
+  }
+}
+
+class _PersonHeader extends StatelessWidget {
+  const _PersonHeader({
+    required this.person,
+    required this.canGenerateAccessToken,
+  });
+
+  final Person person;
+  final bool canGenerateAccessToken;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final viewModel = context.read<PersonDetailViewModel>();
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final actionsWidth = canGenerateAccessToken ? 296.0 : 140.0;
+        final detailsWidth =
+            _availableWidth(constraints, context) -
+            (56 + AppSpacing.md + actionsWidth + AppSpacing.sm);
+
+        return Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                CircleAvatar(radius: 28, child: Text(_initials(person.name))),
+                const SizedBox(width: AppSpacing.md),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        person.name,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: theme.textTheme.headlineMedium,
+                      ),
+                      const SizedBox(height: AppSpacing.xs),
+                      Text(
+                        'Perfil do colaborador',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: theme.textTheme.bodyMedium?.copyWith(
+                          color: theme.colorScheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: AppSpacing.sm),
+                SizedBox(
+                  width: detailsWidth > 360
+                      ? actionsWidth
+                      : canGenerateAccessToken
+                      ? 128
+                      : 140,
+                  child: Wrap(
+                    alignment: WrapAlignment.end,
+                    spacing: AppSpacing.sm,
+                    runSpacing: AppSpacing.xs,
+                    children: [
+                      SizedBox(
+                        width: detailsWidth > 360 ? 140 : 128,
+                        child: AppSecondaryButton(
+                          label: 'Editar dados',
+                          onPressed: () => _editPerson(context, viewModel),
+                        ),
+                      ),
+                      if (canGenerateAccessToken)
+                        SizedBox(
+                          width: detailsWidth > 360 ? 140 : 128,
+                          child: AppSecondaryButton(
+                            label: 'Gerar token',
+                            onPressed: () =>
+                                _showInvitationTokenDialog(context, viewModel),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Future<void> _editPerson(
+    BuildContext context,
+    PersonDetailViewModel viewModel,
+  ) async {
+    final saved = await context.push<bool>(
+      RoutePaths.personEditPath('${person.teamId}', '${person.id}'),
+    );
+
+    if (saved == true) {
+      await viewModel.load();
+    }
+  }
+
+  Future<void> _showInvitationTokenDialog(
+    BuildContext context,
+    PersonDetailViewModel viewModel,
+  ) async {
+    await viewModel.createInvitationToken();
+
+    if (!context.mounted) {
+      return;
+    }
+
+    final token = viewModel.invitationToken;
+    final error = viewModel.invitationErrorMessage;
+
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) {
+        final theme = Theme.of(dialogContext);
+
+        return AlertDialog(
+          title: const Text('Token de acesso'),
+          content: token == null
+              ? Text(
+                  error ?? 'Não foi possível gerar o token.',
+                  style: TextStyle(color: theme.colorScheme.error),
+                )
+              : Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    SelectableText(
+                      token,
+                      style: theme.textTheme.headlineMedium?.copyWith(
+                        letterSpacing: 4,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(height: AppSpacing.sm),
+                    Text(
+                      'Este código também ficará visível no perfil enquanto a tela estiver aberta.',
+                      style: theme.textTheme.bodySmall,
+                    ),
+                  ],
+                ),
+          actions: [
+            if (token != null)
+              TextButton(
+                onPressed: () => _copyToken(dialogContext, token),
+                child: const Text('Copiar'),
+              ),
+            TextButton(
+              onPressed: () {
+                Navigator.pop(dialogContext);
+              },
+              child: const Text('Fechar'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Future<void> _copyToken(BuildContext context, String token) async {
+    await Clipboard.setData(ClipboardData(text: token));
+
+    if (!context.mounted) {
+      return;
+    }
+
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(const SnackBar(content: Text('Token copiado.')));
+  }
+}
+
+class _InvitationTokenBanner extends StatelessWidget {
+  const _InvitationTokenBanner({required this.token});
+
+  final String token;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return _Surface(
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final compact = _availableWidth(constraints, context) < 520;
+
+          final tokenBlock = Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Token de acesso',
+                style: theme.textTheme.labelLarge?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+              ),
+              const SizedBox(height: AppSpacing.xs),
+              SelectableText(
+                token,
+                style: theme.textTheme.headlineMedium?.copyWith(
+                  letterSpacing: 4,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const SizedBox(height: AppSpacing.xs),
+              Text(
+                'Dite este código para a pessoa finalizar o cadastro.',
+                style: theme.textTheme.bodySmall,
+              ),
+            ],
+          );
+
+          final copyButton = AppSecondaryButton(
+            label: 'Copiar',
+            onPressed: () => _copyToken(context),
+          );
+
+          if (compact) {
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                tokenBlock,
+                const SizedBox(height: AppSpacing.sm),
+                copyButton,
+              ],
+            );
+          }
+
+          return Row(
+            children: [
+              Expanded(child: tokenBlock),
+              const SizedBox(width: AppSpacing.md),
+              SizedBox(width: 120, child: copyButton),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  Future<void> _copyToken(BuildContext context) async {
+    await Clipboard.setData(ClipboardData(text: token));
+
+    if (!context.mounted) {
+      return;
+    }
+
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(const SnackBar(content: Text('Token copiado.')));
+  }
+}
+
+class _PersonInfoTab extends StatelessWidget {
+  const _PersonInfoTab({required this.person});
+
+  final Person person;
+
+  @override
+  Widget build(BuildContext context) {
+    final dateFormat = DateFormat.yMMMd('pt_BR');
+
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const _SectionTitle(
+          title: 'Informações gerais',
+          subtitle: 'Dados básicos e sinais recentes do colaborador.',
+        ),
+        const SizedBox(height: AppSpacing.sm),
+        _Surface(
+          child: Wrap(
+            spacing: AppSpacing.lg,
+            runSpacing: AppSpacing.sm,
+            children: [
+              AppKeyValueRow(label: 'Cargo', value: person.position),
+              AppKeyValueRow(
+                label: 'Senioridade',
+                value: person.seniority.label,
+              ),
+              AppKeyValueRow(
+                label: 'Contrato',
+                value: person.contractType.label,
+              ),
+              AppKeyValueRow(
+                label: 'Nascimento',
+                value: person.birthDate == null
+                    ? 'Não informado'
+                    : '${dateFormat.format(person.birthDate!)} (${person.age} anos)',
+              ),
+              AppKeyValueRow(
+                label: 'Admissão',
+                value: person.admissionDate == null
+                    ? 'Não informado'
+                    : dateFormat.format(person.admissionDate!),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: AppSpacing.md),
+        PersonDailySection(
+          teamId: person.teamId,
+          stats: person.dailyStatsSummary,
+        ),
+      ],
+    );
+  }
+}
+
+class _PersonTabSelector extends StatelessWidget {
+  const _PersonTabSelector({
+    required this.selected,
+    required this.canShowOneOnOne,
+    required this.onChanged,
+  });
+
+  final _PersonTab selected;
+  final bool canShowOneOnOne;
+  final ValueChanged<_PersonTab> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return _ContextualTabBar<_PersonTab>(
+      selected: selected,
+      values: [
+        _PersonTab.info,
+        if (canShowOneOnOne) _PersonTab.oneOnOne,
+        _PersonTab.pdi,
+        _PersonTab.analysis,
+      ],
+      labelOf: (tab) => tab.label,
+      iconOf: (tab) => tab.icon,
+      onChanged: onChanged,
+    );
+  }
+}
+
+class _OneOnOneTab extends StatelessWidget {
+  const _OneOnOneTab({
+    required this.growth,
+    required this.selectedView,
+    required this.onViewChanged,
+    required this.sessionSearchController,
+    required this.canManageGrowth,
+    required this.onPlanSession,
+  });
+
+  final PersonGrowthViewModel growth;
+  final _OneOnOneView selectedView;
+  final ValueChanged<_OneOnOneView> onViewChanged;
+  final TextEditingController sessionSearchController;
+  final bool canManageGrowth;
+  final VoidCallback onPlanSession;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _ModuleHeader(
+          title: '1:1',
+          subtitle:
+              'Consulte registros desta pessoa e planeje encontros no menu 1:1.',
+          helpMessage:
+              'Documentos e execução ficam no módulo 1:1 para reutilizar roteiros com todos os liderados.',
+          primaryLabel: 'Planejar 1:1',
+          onPrimaryPressed: canManageGrowth ? onPlanSession : null,
+        ),
+        const SizedBox(height: AppSpacing.sm),
+        _ContextualTabBar<_OneOnOneView>(
+          selected: selectedView,
+          values: [_OneOnOneView.history, _OneOnOneView.suggestions],
+          labelOf: (view) => view.label,
+          iconOf: (view) => view.icon,
+          onChanged: onViewChanged,
+        ),
+        const SizedBox(height: AppSpacing.sm),
+        switch (selectedView) {
+          _OneOnOneView.history => _OneOnOneHistoryView(
+            growth: growth,
+            searchController: sessionSearchController,
+          ),
+          _OneOnOneView.suggestions => _OneOnOneSuggestionsView(
+            suggestions: growth.suggestions,
+          ),
+        },
+      ],
+    );
+  }
+}
+
+class _OneOnOneSuggestionsView extends StatelessWidget {
+  const _OneOnOneSuggestionsView({required this.suggestions});
+
+  final GrowthSuggestions? suggestions;
+
+  @override
+  Widget build(BuildContext context) {
+    final questions = suggestions?.oneOnOneQuestions ?? const <String>[];
+
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _SectionTitle(
+          title: 'Perguntas sugeridas',
+          subtitle:
+              'Use como inspiração para preparar a pauta do próximo encontro.',
+        ),
+        const SizedBox(height: AppSpacing.sm),
+        if (questions.isEmpty)
+          const _EmptyState(
+            icon: Icons.help_outline,
+            message: 'Ainda não há perguntas sugeridas para esta pessoa.',
+          )
+        else
+          for (final question in questions)
+            _TextTile(icon: Icons.help_outline, title: question),
+      ],
+    );
+  }
+}
+
+class _OneOnOneHistoryView extends StatelessWidget {
+  const _OneOnOneHistoryView({
+    required this.growth,
+    required this.searchController,
+  });
+
+  final PersonGrowthViewModel growth;
+  final TextEditingController searchController;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _SectionTitle(
+          title: 'Histórico de 1:1',
+          subtitle: 'Paginado e pesquisável por título/notas.',
+        ),
+        const SizedBox(height: AppSpacing.sm),
+        TextField(
+          controller: searchController,
+          decoration: InputDecoration(
+            labelText: 'Buscar histórico',
+            suffixIcon: IconButton(
+              tooltip: 'Buscar',
+              onPressed: () => growth.searchSessions(searchController.text),
+              icon: const Icon(Icons.search),
+            ),
+          ),
+          onSubmitted: growth.searchSessions,
+        ),
+        const SizedBox(height: AppSpacing.sm),
+        if (growth.sessions.isEmpty)
+          const _EmptyState(
+            icon: Icons.history_outlined,
+            message: 'Nenhum 1:1 registrado ainda.',
+          )
+        else
+          for (final session in growth.sessions) _SessionTile(session: session),
+        const SizedBox(height: AppSpacing.xs),
+        _InlinePagination(
+          page: growth.sessionPage,
+          onPrevious: growth.sessionPage == 1
+              ? null
+              : growth.previousSessionPage,
+          onNext: growth.sessions.length < 10 ? null : growth.nextSessionPage,
+        ),
+      ],
+    );
+  }
+}
+
+class _PdiTab extends StatelessWidget {
+  const _PdiTab({
+    required this.growth,
+    required this.selectedView,
+    required this.onViewChanged,
+    required this.canManageGrowth,
+    required this.onCreatePlan,
+    required this.onCreateItem,
+    required this.onEditPlan,
+    required this.onDeletePlan,
+  });
+
+  final PersonGrowthViewModel growth;
+  final _PdiView selectedView;
+  final ValueChanged<_PdiView> onViewChanged;
+  final bool canManageGrowth;
+  final VoidCallback onCreatePlan;
+  final ValueChanged<DevelopmentPlan> onCreateItem;
+  final ValueChanged<DevelopmentPlan> onEditPlan;
+  final ValueChanged<DevelopmentPlan> onDeletePlan;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _ModuleHeader(
+          title: 'PDI',
+          subtitle: 'Organize planos de desenvolvimento e evidências.',
+          helpMessage:
+              'Descreva uma evolução esperada, conecte com uma competência e acompanhe por ações concretas e evidências observáveis.',
+          primaryLabel: 'Novo PDI',
+          onPrimaryPressed: canManageGrowth ? onCreatePlan : null,
+        ),
+        const SizedBox(height: AppSpacing.sm),
+        _ContextualTabBar<_PdiView>(
+          selected: selectedView,
+          values: const [_PdiView.tracking, _PdiView.suggestions],
+          labelOf: (view) => view == _PdiView.tracking ? 'Planos' : view.label,
+          iconOf: (view) => view.icon,
+          onChanged: onViewChanged,
+        ),
+        const SizedBox(height: AppSpacing.md),
+        switch (selectedView) {
+          _PdiView.create || _PdiView.tracking => _PdiTrackingView(
+            plans: growth.plans,
+            canManageGrowth: canManageGrowth,
+            onCreateItem: onCreateItem,
+            onEditPlan: onEditPlan,
+            onDeletePlan: onDeletePlan,
+          ),
+          _PdiView.suggestions => _PdiSuggestionsView(
+            suggestions: growth.suggestions,
+          ),
+        },
+      ],
+    );
+  }
+}
+
+class _PdiCreateView extends StatelessWidget {
+  const _PdiCreateView({
+    required this.titleController,
+    required this.summaryController,
+    required this.targetRoleController,
+    required this.loading,
+    required this.onCreatePlan,
+  });
+
+  final TextEditingController titleController;
+  final TextEditingController summaryController;
+  final TextEditingController targetRoleController;
+  final bool loading;
+  final VoidCallback onCreatePlan;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const _SectionTitle(
+          title: 'Criar PDI',
+          subtitle: 'Defina o objetivo antes de cadastrar ações de evolução.',
+          helpMessage:
+              'Use o PDI para transformar uma necessidade de evolução em ações acompanháveis e evidências observáveis.',
+        ),
+        const SizedBox(height: AppSpacing.sm),
+        _Surface(
+          child: _FormColumn(
+            children: [
+              TextField(
+                controller: titleController,
+                decoration: const InputDecoration(
+                  labelText: 'Título',
+                  helperText:
+                      'Nome curto do plano. Ex.: Evoluir autonomia técnica.',
+                ),
+              ),
+              TextField(
+                controller: targetRoleController,
+                decoration: const InputDecoration(
+                  labelText: 'Papel alvo',
+                  helperText:
+                      'Cargo, papel ou responsabilidade desejada. Ex.: referência técnica do squad.',
+                ),
+              ),
+              TextField(
+                controller: summaryController,
+                minLines: 8,
+                maxLines: 16,
+                decoration: const InputDecoration(
+                  labelText: 'Resumo',
+                  helperText:
+                      'Explique contexto, lacuna, expectativa e como a evolução será percebida.',
+                ),
+              ),
+              const SizedBox(height: AppSpacing.md),
+              Row(
+                children: [
+                  Expanded(
+                    child: AppPrimaryButton(
+                      label: 'Criar PDI',
+                      loading: loading,
+                      onPressed: onCreatePlan,
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _PdiSuggestionsView extends StatelessWidget {
+  const _PdiSuggestionsView({required this.suggestions});
+
+  final GrowthSuggestions? suggestions;
+
+  @override
+  Widget build(BuildContext context) {
+    final pdiSuggestions = suggestions?.pdiSuggestions ?? const [];
+
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _SectionTitle(
+          title: 'Sugestões para PDI',
+          subtitle: 'Use insumos da análise para planejar próximas ações.',
+        ),
+        const SizedBox(height: AppSpacing.sm),
+        if (pdiSuggestions.isEmpty)
+          const _EmptyState(
+            icon: Icons.lightbulb_outline,
+            message: 'Ainda não há sugestões de PDI para esta pessoa.',
+          )
+        else
+          for (final suggestion in pdiSuggestions)
+            _TextTile(
+              icon: Icons.lightbulb_outline,
+              title: suggestion['title'].toString(),
+              subtitle: suggestion['evidence']?.toString(),
+            ),
+      ],
+    );
+  }
+}
+
+class _PdiTrackingView extends StatelessWidget {
+  const _PdiTrackingView({
+    required this.plans,
+    required this.canManageGrowth,
+    required this.onCreateItem,
+    required this.onEditPlan,
+    required this.onDeletePlan,
+  });
+
+  final List<DevelopmentPlan> plans;
+  final bool canManageGrowth;
+  final ValueChanged<DevelopmentPlan> onCreateItem;
+  final ValueChanged<DevelopmentPlan> onEditPlan;
+  final ValueChanged<DevelopmentPlan> onDeletePlan;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _SectionTitle(
+          title: 'Acompanhar PDIs',
+          subtitle: canManageGrowth
+              ? 'Atualize progresso e cadastre ações do plano em andamento.'
+              : 'Visualize progresso, ações e evidências do plano em andamento.',
+        ),
+        const SizedBox(height: AppSpacing.sm),
+        if (plans.isEmpty)
+          const _EmptyState(
+            icon: Icons.fact_check_outlined,
+            message: 'Nenhum PDI cadastrado ainda.',
+          )
+        else
+          for (final plan in plans)
+            _PlanTile(
+              plan: plan,
+              canManageGrowth: canManageGrowth,
+              onCreateItem: () => onCreateItem(plan),
+              onEditPlan: () => onEditPlan(plan),
+              onDeletePlan: () => onDeletePlan(plan),
+            ),
+      ],
+    );
+  }
+}
+
+class _AnalysisTab extends StatelessWidget {
+  const _AnalysisTab({required this.person, required this.growth});
+
+  final Person person;
+  final PersonGrowthViewModel growth;
+
+  @override
+  Widget build(BuildContext context) {
+    final deliveryKpis = growth.deliveryKpis;
+
+    if (deliveryKpis != null) {
+      return _CanonicalDeliveryKpis(summary: deliveryKpis);
+    }
+
+    final recentMetrics = growth.deliveryMetrics
+        .where((metric) => !metric.metricType.startsWith('annual_'))
+        .take(6)
+        .toList(growable: false);
+    final pullRequests =
+        _metricLatestValue(
+          growth.deliveryMetrics,
+          'annual_pull_request_count',
+        ) ??
+        _metricSum(growth.deliveryMetrics, 'pull_request_count');
+    final qualityAverage =
+        _metricLatestValue(growth.deliveryMetrics, 'annual_quality_average') ??
+        _metricAverage(growth.deliveryMetrics, 'code_quality_score');
+    final ciFailureAverage =
+        _metricLatestValue(
+          growth.deliveryMetrics,
+          'annual_ci_failure_average',
+        ) ??
+        _metricRatio(
+          growth.deliveryMetrics,
+          'ci_failure_count',
+          'pull_request_merged_count',
+        );
+    final reviewAverage =
+        _metricLatestValue(
+          growth.deliveryMetrics,
+          'annual_review_comment_average',
+        ) ??
+        _metricRatio(
+          growth.deliveryMetrics,
+          'review_count',
+          'pull_request_count',
+        );
+    final reworkAverage = _metricLatestValue(
+      growth.deliveryMetrics,
+      'annual_rework_average',
+    );
+    final prSizeAverage =
+        _metricLatestValue(growth.deliveryMetrics, 'annual_pr_size_average') ??
+        _metricAverage(growth.deliveryMetrics, 'pull_request_changed_lines');
+    final mergeTimeAverage =
+        _metricLatestValue(
+          growth.deliveryMetrics,
+          'annual_pr_merge_time_average',
+        ) ??
+        _metricAverage(growth.deliveryMetrics, 'pull_request_merge_time');
+    final reviewAcceptanceRate =
+        _metricLatestValue(
+          growth.deliveryMetrics,
+          'annual_review_acceptance_rate',
+        ) ??
+        _metricPercentage(
+          growth.deliveryMetrics,
+          'review_approved_count',
+          'review_count',
+        );
+    final ciSuccessRate =
+        _metricLatestValue(growth.deliveryMetrics, 'annual_ci_success_rate') ??
+        _metricPercentage(
+          growth.deliveryMetrics,
+          'ci_success_count',
+          'ci_success_count',
+          additionalDenominatorType: 'ci_failure_count',
+        );
+    final deliveryPoints =
+        _metricLatestValue(
+          growth.deliveryMetrics,
+          'annual_delivery_points_total',
+        ) ??
+        _metricSum(growth.deliveryMetrics, 'task_delivery_points') ??
+        _metricSum(growth.deliveryMetrics, 'delivery_points');
+
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _SectionTitle(
+          title: 'KPIs do colaborador',
+          subtitle: 'Indicadores calculados a partir das integrações.',
+        ),
+        const SizedBox(height: AppSpacing.sm),
+        LayoutBuilder(
+          builder: (context, constraints) {
+            final isCompact = constraints.maxWidth < 360;
+            final itemWidth = isCompact
+                ? constraints.maxWidth
+                : (constraints.maxWidth - AppSpacing.sm) / 2;
+
+            return Wrap(
+              spacing: AppSpacing.sm,
+              runSpacing: AppSpacing.sm,
+              children: [
+                SizedBox(
+                  width: itemWidth,
+                  child: AppSummaryCard(
+                    icon: Icons.forum_outlined,
+                    label: '1:1 registrados',
+                    value: '${growth.sessions.length}',
+                  ),
+                ),
+                SizedBox(
+                  width: itemWidth,
+                  child: AppSummaryCard(
+                    icon: Icons.trending_up,
+                    label: 'PDIs ativos',
+                    value: '${growth.plans.length}',
+                  ),
+                ),
+                SizedBox(
+                  width: itemWidth,
+                  child: AppSummaryCard(
+                    icon: Icons.commit_outlined,
+                    label: 'PRs no ano',
+                    value: _compactMetric(pullRequests),
+                  ),
+                ),
+                SizedBox(
+                  width: itemWidth,
+                  child: AppSummaryCard(
+                    icon: Icons.verified_outlined,
+                    label: 'Qualidade média',
+                    value: qualityAverage == null
+                        ? '-'
+                        : qualityAverage.toStringAsFixed(0),
+                  ),
+                ),
+                SizedBox(
+                  width: itemWidth,
+                  child: AppSummaryCard(
+                    icon: Icons.error_outline,
+                    label: 'CI falhando / PR',
+                    value: _decimalMetric(ciFailureAverage),
+                  ),
+                ),
+                SizedBox(
+                  width: itemWidth,
+                  child: AppSummaryCard(
+                    icon: Icons.rate_review_outlined,
+                    label: 'Review / PR',
+                    value: _decimalMetric(reviewAverage),
+                  ),
+                ),
+                SizedBox(
+                  width: itemWidth,
+                  child: AppSummaryCard(
+                    icon: Icons.build_outlined,
+                    label: 'Retrabalho / PR',
+                    value: _decimalMetric(reworkAverage),
+                  ),
+                ),
+                SizedBox(
+                  width: itemWidth,
+                  child: AppSummaryCard(
+                    icon: Icons.task_alt_outlined,
+                    label: 'Pontos entregues',
+                    value: _compactMetric(deliveryPoints),
+                  ),
+                ),
+                SizedBox(
+                  width: itemWidth,
+                  child: AppSummaryCard(
+                    icon: Icons.timeline_outlined,
+                    label: 'Tempo merge / PR',
+                    value: _unitMetric(mergeTimeAverage, 'h'),
+                  ),
+                ),
+                SizedBox(
+                  width: itemWidth,
+                  child: AppSummaryCard(
+                    icon: Icons.stacked_line_chart_outlined,
+                    label: 'Tamanho médio PR',
+                    value: _unitMetric(prSizeAverage, 'linhas'),
+                  ),
+                ),
+                SizedBox(
+                  width: itemWidth,
+                  child: AppSummaryCard(
+                    icon: Icons.fact_check_outlined,
+                    label: 'Aceite em review',
+                    value: _percentageMetric(reviewAcceptanceRate),
+                  ),
+                ),
+                SizedBox(
+                  width: itemWidth,
+                  child: AppSummaryCard(
+                    icon: Icons.check_circle_outline,
+                    label: 'CI com sucesso',
+                    value: _percentageMetric(ciSuccessRate),
+                  ),
+                ),
+              ],
+            );
+          },
+        ),
+        const SizedBox(height: AppSpacing.md),
+        _SectionTitle(
+          title: 'Evidências recentes',
+          subtitle: 'Últimas métricas numéricas recebidas por webhook.',
+        ),
+        const SizedBox(height: AppSpacing.sm),
+        if (recentMetrics.isEmpty)
+          const _EmptyState(
+            icon: Icons.insights_outlined,
+            message: 'Nenhuma métrica de webhook encontrada para esta pessoa.',
+          )
+        else
+          for (var index = 0; index < recentMetrics.length; index++) ...[
+            if (index > 0) const SizedBox(height: AppSpacing.sm),
+            _DeliveryMetricTile(metric: recentMetrics[index]),
+          ],
+      ],
+    );
+  }
+}
+
+class _CanonicalDeliveryKpis extends StatelessWidget {
+  const _CanonicalDeliveryKpis({required this.summary});
+
+  final DeliveryKpiSummary summary;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const _SectionTitle(
+          title: 'KPIs de entregas',
+          subtitle:
+              'Baseados em tarefas correlacionadas entre ClickUp e GitHub.',
+        ),
+        const SizedBox(height: AppSpacing.sm),
+        _Surface(
+          child: Text(
+            '${summary.associatedCases} de ${summary.casesInScope} entregas associadas'
+            '${summary.associationRate == null ? '' : ' · ${_percentageMetric(summary.associationRate)} de cobertura'}',
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
+          ),
+        ),
+        const SizedBox(height: AppSpacing.sm),
+        LayoutBuilder(
+          builder: (context, constraints) {
+            final itemWidth = constraints.maxWidth < 360
+                ? constraints.maxWidth
+                : (constraints.maxWidth - AppSpacing.sm) / 2;
+
+            return Wrap(
+              spacing: AppSpacing.sm,
+              runSpacing: AppSpacing.sm,
+              children: [
+                _kpiCard(
+                  itemWidth,
+                  Icons.task_alt_outlined,
+                  'Entregas publicadas',
+                  '${summary.publishedDeliveries}',
+                ),
+                _kpiCard(
+                  itemWidth,
+                  Icons.stars_outlined,
+                  'Pontos publicados',
+                  _compactMetric(summary.publishedStoryPoints),
+                ),
+                _kpiCard(
+                  itemWidth,
+                  Icons.timer_outlined,
+                  'Desenvolvimento p50',
+                  _unitMetric(summary.developmentCycleP50, 'h'),
+                ),
+                _kpiCard(
+                  itemWidth,
+                  Icons.hourglass_top_outlined,
+                  'Espera por QA p50',
+                  _unitMetric(summary.qaWaitP50, 'h'),
+                ),
+                _kpiCard(
+                  itemWidth,
+                  Icons.verified_outlined,
+                  'QA no primeiro passe',
+                  _percentageMetric(summary.qaFirstPassRate),
+                ),
+                _kpiCard(
+                  itemWidth,
+                  Icons.replay_outlined,
+                  'Retrabalho após QA',
+                  _percentageMetric(summary.qaReworkRate),
+                ),
+                _kpiCard(
+                  itemWidth,
+                  Icons.block_outlined,
+                  'Tempo impedido',
+                  _unitMetric(summary.blockedHours, 'h'),
+                ),
+              ],
+            );
+          },
+        ),
+        const SizedBox(height: AppSpacing.sm),
+        Text(
+          'Definição ${summary.definitionVersion}. Indicadores sem amostra suficiente aparecem como “-”.',
+          style: theme.textTheme.bodySmall?.copyWith(
+            color: theme.colorScheme.onSurfaceVariant,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _kpiCard(double width, IconData icon, String label, String value) {
+    return SizedBox(
+      width: width,
+      child: AppSummaryCard(icon: icon, label: label, value: value),
+    );
+  }
+}
+
+class _DeliveryMetricTile extends StatelessWidget {
+  const _DeliveryMetricTile({required this.metric});
+
+  final PersonDeliveryMetric metric;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return _Surface(
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(Icons.analytics_outlined, color: theme.colorScheme.primary),
+          const SizedBox(width: AppSpacing.sm),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  _deliveryMetricLabel(metric.metricType),
+                  style: theme.textTheme.titleSmall,
+                ),
+                if (metric.sourceRef != null)
+                  Text(
+                    metric.sourceRef!,
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: theme.colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          Text(
+            '${metric.metricValue} ${metric.unit ?? ''}'.trim(),
+            style: theme.textTheme.labelLarge,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+String _deliveryMetricLabel(String type) {
+  return switch (type) {
+    'code_quality_score' => 'Qualidade do código',
+    'delivery_points' => 'Pontos entregues',
+    'task_completed_count' => 'Tarefas concluídas',
+    'task_status_change_count' => 'Mudanças de status',
+    'task_delivery_points' => 'Pontos de tarefas',
+    'task_delivery_count' => 'Tarefas entregues',
+    'pull_request_count' => 'Pull requests',
+    'pull_request_merged_count' => 'PRs mesclados',
+    'pull_request_closed_without_merge_count' => 'PRs fechados sem merge',
+    'pull_request_open_time' => 'Tempo até fechamento',
+    'pull_request_merge_time' => 'Tempo até merge',
+    'pull_request_changed_files' => 'Arquivos alterados',
+    'pull_request_changed_lines' => 'Linhas alteradas',
+    'review_count' => 'Reviews',
+    'review_approved_count' => 'Reviews aprovados',
+    'review_changes_requested_count' => 'Reviews com alterações',
+    'review_commented_count' => 'Reviews comentados',
+    'ci_run_count' => 'Execuções de CI',
+    'ci_success_count' => 'CI com sucesso',
+    'ci_failure_count' => 'Falhas de CI',
+    'deployment_count' => 'Deployments',
+    'deployment_success_count' => 'Deployments com sucesso',
+    'deployment_failure_count' => 'Falhas de deploy',
+    'task_pull_request_link_count' => 'Tarefa vinculada a PR',
+    'task_to_pull_request_hours' => 'Tempo tarefa até PR',
+    'review_comments_count' => 'Comentários de review',
+    'ci_failures_count' => 'Falhas de CI',
+    'rework_count' => 'Retrabalho',
+    'changed_files_count' => 'Arquivos alterados',
+    'changed_lines_count' => 'Linhas alteradas',
+    'pr_merge_time_hours' => 'Tempo até merge',
+    'review_acceptance_rate' => 'Aceite em review',
+    'ci_success_rate' => 'CI com sucesso',
+    'annual_pull_request_count' => 'PRs no ano',
+    'annual_task_delivery_count' => 'Tarefas no ano',
+    'annual_quality_average' => 'Qualidade média anual',
+    'annual_review_comment_average' => 'Review / PR',
+    'annual_ci_failure_average' => 'CI falhando / PR',
+    'annual_rework_average' => 'Retrabalho / PR',
+    'annual_delivery_points_total' => 'Pontos entregues no ano',
+    'annual_pr_size_average' => 'Tamanho médio de PR',
+    'annual_pr_merge_time_average' => 'Tempo médio até merge',
+    'annual_review_acceptance_rate' => 'Aceite anual em review',
+    'annual_ci_success_rate' => 'Sucesso anual de CI',
+    _ => type,
+  };
+}
+
+class _SessionTile extends StatelessWidget {
+  const _SessionTile({required this.session});
+
+  final OneOnOneSession session;
+
+  @override
+  Widget build(BuildContext context) {
+    return _TextTile(
+      icon: Icons.forum_outlined,
+      title: session.title,
+      subtitle: [
+        if (session.heldAt != null)
+          DateFormat.yMMMd('pt_BR').format(session.heldAt!),
+        session.status,
+        if (session.notes != null) session.notes!,
+      ].join(' · '),
+    );
+  }
+}
+
+class _PlanTile extends StatelessWidget {
+  const _PlanTile({
+    required this.plan,
+    required this.canManageGrowth,
+    required this.onCreateItem,
+    required this.onEditPlan,
+    required this.onDeletePlan,
+  });
+
+  final DevelopmentPlan plan;
+  final bool canManageGrowth;
+  final VoidCallback onCreateItem;
+  final VoidCallback onEditPlan;
+  final VoidCallback onDeletePlan;
+
+  @override
+  Widget build(BuildContext context) {
+    return _Surface(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  plan.title,
+                  style: Theme.of(context).textTheme.titleSmall,
+                ),
+              ),
+              Text('${plan.progress}%'),
+            ],
+          ),
+          if (plan.summary != null) Text(plan.summary!),
+          const SizedBox(height: AppSpacing.sm),
+          LinearProgressIndicator(value: plan.progress / 100),
+          const SizedBox(height: AppSpacing.sm),
+          for (final item in plan.items)
+            _TextTile(
+              icon: Icons.check_circle_outline,
+              title: item.title,
+              subtitle:
+                  '${item.status} · ${item.competency ?? 'sem competência'}',
+            ),
+          if (canManageGrowth) ...[
+            const SizedBox(height: AppSpacing.sm),
+            Row(
+              children: [
+                Expanded(
+                  child: AppSecondaryButton(
+                    label: 'Editar',
+                    onPressed: onEditPlan,
+                  ),
+                ),
+                const SizedBox(width: AppSpacing.sm),
+                Expanded(
+                  child: AppSecondaryButton(
+                    label: 'Excluir',
+                    onPressed: onDeletePlan,
+                  ),
+                ),
+                const SizedBox(width: AppSpacing.sm),
+                Expanded(
+                  child: AppPrimaryButton(
+                    label: 'Adicionar ação',
+                    onPressed: onCreateItem,
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _InlinePagination extends StatelessWidget {
+  const _InlinePagination({
+    required this.page,
+    required this.onPrevious,
+    required this.onNext,
+  });
+
+  final int page;
+  final VoidCallback? onPrevious;
+  final VoidCallback? onNext;
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            SizedBox(
+              width: 64,
+              child: AppSecondaryButton(label: '←', onPressed: onPrevious),
+            ),
+            const SizedBox(width: AppSpacing.sm),
+            SizedBox(
+              width: 78,
+              child: Text(
+                'Página $page',
+                textAlign: TextAlign.center,
+                style: Theme.of(context).textTheme.labelLarge,
+              ),
+            ),
+            const SizedBox(width: AppSpacing.sm),
+            SizedBox(
+              width: 64,
+              child: AppSecondaryButton(label: '→', onPressed: onNext),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ModuleHeader extends StatelessWidget {
+  const _ModuleHeader({
+    required this.title,
+    required this.subtitle,
+    required this.helpMessage,
+    required this.primaryLabel,
+    required this.onPrimaryPressed,
+  });
+
+  final String title;
+  final String subtitle;
+  final String helpMessage;
+  final String primaryLabel;
+  final VoidCallback? onPrimaryPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final availableWidth = _availableWidth(constraints, context);
+        final titleBlock = _SectionTitle(
+          title: title,
+          subtitle: subtitle,
+          helpMessage: helpMessage,
+        );
+        final primaryAction = onPrimaryPressed == null
+            ? null
+            : AppPrimaryButton(
+                label: primaryLabel,
+                onPressed: onPrimaryPressed,
+              );
+
+        return SizedBox(
+          width: availableWidth,
+          child: primaryAction == null
+              ? titleBlock
+              : availableWidth < 460
+              ? Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    titleBlock,
+                    const SizedBox(height: AppSpacing.sm),
+                    SizedBox(width: double.infinity, child: primaryAction),
+                  ],
+                )
+              : Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    SizedBox(width: availableWidth - 160, child: titleBlock),
+                    const SizedBox(width: AppSpacing.md),
+                    SizedBox(width: 144, child: primaryAction),
+                  ],
+                ),
+        );
+      },
+    );
+  }
+}
+
+class _ContextualTabBar<T> extends StatelessWidget {
+  const _ContextualTabBar({
+    required this.selected,
+    required this.values,
+    required this.labelOf,
+    required this.iconOf,
+    required this.onChanged,
+  });
+
+  final T selected;
+  final Iterable<T> values;
+  final String Function(T value) labelOf;
+  final IconData Function(T value) iconOf;
+  final ValueChanged<T> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final items = values.toList(growable: false);
+    final theme = Theme.of(context);
+    final borderColor = theme.colorScheme.outlineVariant.withValues(
+      alpha: 0.55,
+    );
+
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: Container(
+        height: 44,
+        decoration: BoxDecoration(
+          color: theme.colorScheme.surface,
+          border: Border.all(color: borderColor),
+          borderRadius: BorderRadius.circular(AppRadius.md),
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            for (var index = 0; index < items.length; index++) ...[
+              if (index > 0)
+                VerticalDivider(width: 1, thickness: 1, color: borderColor),
+              _TabPill(
+                icon: iconOf(items[index]),
+                label: labelOf(items[index]),
+                selected: items[index] == selected,
+                onPressed: () => onChanged(items[index]),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _TabPill extends StatelessWidget {
+  const _TabPill({
+    required this.icon,
+    required this.label,
+    required this.selected,
+    required this.onPressed,
+  });
+
+  final IconData icon;
+  final String label;
+  final bool selected;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final foreground = selected
+        ? theme.colorScheme.onPrimary
+        : theme.colorScheme.onSurface;
+
+    return Material(
+      color: selected ? theme.colorScheme.primary : Colors.transparent,
+      child: InkWell(
+        onTap: onPressed,
+        child: Center(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
+            child: DefaultTextStyle.merge(
+              style: theme.textTheme.labelLarge?.copyWith(color: foreground),
+              child: IconTheme.merge(
+                data: IconThemeData(color: foreground),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(icon, size: 18),
+                    const SizedBox(width: AppSpacing.xs),
+                    Text(label),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _FocusedFlowView extends StatelessWidget {
+  const _FocusedFlowView({
+    required this.title,
+    required this.subtitle,
+    required this.onBack,
+    required this.actionErrorMessage,
+    required this.onDismissActionError,
+    required this.child,
+  });
+
+  final String title;
+  final String subtitle;
+  final VoidCallback onBack;
+  final String? actionErrorMessage;
+  final VoidCallback onDismissActionError;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return _PersonDetailScrollView(
+      children: [
+        LayoutBuilder(
+          builder: (context, constraints) {
+            final width = _availableWidth(constraints, context);
+
+            return SizedBox(
+              width: width,
+              child: Row(
+                children: [
+                  IconButton(
+                    tooltip: 'Voltar para Pessoa',
+                    onPressed: onBack,
+                    icon: const Icon(Icons.arrow_back),
+                  ),
+                  const SizedBox(width: AppSpacing.xs),
+                  SizedBox(
+                    width: _nonNegative(width - (48 + AppSpacing.xs)),
+                    child: _SectionTitle(title: title, subtitle: subtitle),
+                  ),
+                ],
+              ),
+            );
+          },
+        ),
+        const SizedBox(height: AppSpacing.md),
+        if (actionErrorMessage != null) ...[
+          _ActionErrorBanner(
+            message: actionErrorMessage!,
+            onDismiss: onDismissActionError,
+          ),
+          const SizedBox(height: AppSpacing.md),
+        ],
+        child,
+      ],
+    );
+  }
+}
+
+class _ActionErrorBanner extends StatelessWidget {
+  const _ActionErrorBanner({required this.message, required this.onDismiss});
+
+  final String message;
+  final VoidCallback onDismiss;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+
+    return Container(
+      padding: const EdgeInsets.all(AppSpacing.md),
+      decoration: BoxDecoration(
+        color: colorScheme.errorContainer,
+        borderRadius: BorderRadius.circular(AppRadius.md),
+        border: Border.all(color: colorScheme.error),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.error_outline, color: colorScheme.onErrorContainer),
+          const SizedBox(width: AppSpacing.sm),
+          Expanded(
+            child: Text(
+              message,
+              style: theme.textTheme.bodyMedium?.copyWith(
+                color: colorScheme.onErrorContainer,
+              ),
+            ),
+          ),
+          IconButton(
+            tooltip: 'Dispensar',
+            onPressed: onDismiss,
+            icon: Icon(Icons.close, color: colorScheme.onErrorContainer),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _PersonDetailScrollView extends StatelessWidget {
+  const _PersonDetailScrollView({required this.children});
+
+  final List<Widget> children;
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final viewport = MediaQuery.sizeOf(context);
+        final hasBoundedHeight = constraints.hasBoundedHeight;
+
+        return SizedBox(
+          width: constraints.hasBoundedWidth
+              ? constraints.maxWidth
+              : viewport.width,
+          height: hasBoundedHeight ? constraints.maxHeight : null,
+          child: ListView(
+            padding: EdgeInsets.zero,
+            primary: hasBoundedHeight,
+            shrinkWrap: !hasBoundedHeight,
+            children: children,
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _FormColumn extends StatelessWidget {
+  const _FormColumn({required this.children});
+
+  final List<Widget> children;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        for (var index = 0; index < children.length; index++) ...[
+          if (index > 0) const SizedBox(height: AppSpacing.sm),
+          children[index],
+        ],
+      ],
+    );
+  }
+}
+
+class _EditorSheet extends StatelessWidget {
+  const _EditorSheet({
+    required this.title,
+    required this.subtitle,
+    required this.children,
+    required this.primaryLabel,
+    required this.onSubmit,
+  });
+
+  final String title;
+  final String subtitle;
+  final List<Widget> children;
+  final String primaryLabel;
+  final Future<void> Function(BuildContext context) onSubmit;
+
+  @override
+  Widget build(BuildContext context) {
+    final maxHeight = MediaQuery.sizeOf(context).height * .92;
+
+    return SafeArea(
+      top: false,
+      child: Align(
+        alignment: Alignment.bottomCenter,
+        child: ConstrainedBox(
+          constraints: BoxConstraints(maxWidth: 720, maxHeight: maxHeight),
+          child: SizedBox(
+            height: maxHeight,
+            child: Material(
+              borderRadius: const BorderRadius.vertical(
+                top: Radius.circular(AppRadius.md),
+              ),
+              child: Padding(
+                padding: const EdgeInsets.all(AppSpacing.md),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(
+                          child: _SectionTitle(
+                            title: title,
+                            subtitle: subtitle,
+                          ),
+                        ),
+                        IconButton(
+                          tooltip: 'Fechar',
+                          onPressed: () => Navigator.pop(context),
+                          icon: const Icon(Icons.close),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: AppSpacing.md),
+                    Expanded(
+                      child: SingleChildScrollView(
+                        child: _FormColumn(children: children),
+                      ),
+                    ),
+                    const SizedBox(height: AppSpacing.md),
+                    AppDialogActions(
+                      secondaryLabel: 'Cancelar',
+                      onSecondaryPressed: () => Navigator.pop(context),
+                      primaryLabel: primaryLabel,
+                      onPrimaryPressed: () => onSubmit(context),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+Future<void> _showEditorSheet({
+  required BuildContext context,
+  required String title,
+  required String subtitle,
+  required List<Widget> children,
+  required String primaryLabel,
+  required Future<void> Function(BuildContext context) onSubmit,
+}) {
+  return showModalBottomSheet<void>(
+    context: context,
+    isScrollControlled: true,
+    builder: (_) => _EditorSheet(
+      title: title,
+      subtitle: subtitle,
+      primaryLabel: primaryLabel,
+      onSubmit: onSubmit,
+      children: children,
+    ),
+  );
+}
+
+class _EmptyState extends StatelessWidget {
+  const _EmptyState({required this.icon, required this.message});
+
+  final IconData icon;
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return _Surface(
+      child: Row(
+        children: [
+          Icon(icon, color: theme.colorScheme.primary),
+          const SizedBox(width: AppSpacing.sm),
+          Expanded(
+            child: Text(
+              message,
+              style: theme.textTheme.bodyMedium?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SectionTitle extends StatelessWidget {
+  const _SectionTitle({required this.title, this.subtitle, this.helpMessage});
+
+  final String title;
+  final String? subtitle;
+  final String? helpMessage;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Flexible(child: Text(title, style: theme.textTheme.titleMedium)),
+            if (helpMessage != null) ...[
+              const SizedBox(width: AppSpacing.xs),
+              Tooltip(
+                message: helpMessage!,
+                triggerMode: TooltipTriggerMode.tap,
+                child: Icon(
+                  Icons.help_outline,
+                  size: 18,
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ],
+          ],
+        ),
+        if (subtitle != null)
+          Text(
+            subtitle!,
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+class _TextTile extends StatelessWidget {
+  const _TextTile({required this.icon, required this.title, this.subtitle});
+
+  final IconData icon;
+  final String title;
+  final String? subtitle;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: AppSpacing.sm),
+      child: _Surface(
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final contentWidth = _nonNegative(
+              _availableWidth(constraints, context) - (24 + AppSpacing.sm),
+            );
+
+            return Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Icon(icon, color: theme.colorScheme.primary),
+                const SizedBox(width: AppSpacing.sm),
+                SizedBox(
+                  width: contentWidth,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(title, style: theme.textTheme.titleSmall),
+                      if (subtitle != null)
+                        Text(
+                          subtitle!,
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            color: theme.colorScheme.onSurfaceVariant,
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+              ],
+            );
+          },
+        ),
+      ),
+    );
+  }
+}
+
+class _Surface extends StatelessWidget {
+  const _Surface({required this.child});
+
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      margin: EdgeInsets.zero,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(AppRadius.sm),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(AppSpacing.md),
+        child: child,
+      ),
+    );
+  }
+}
+
+String _initials(String name) {
+  final parts = name.trim().split(RegExp(r'\s+'));
+  if (parts.length == 1) {
+    return parts.first.characters.take(2).toString().toUpperCase();
+  }
+
+  return '${parts.first.characters.first}${parts.last.characters.first}'
+      .toUpperCase();
+}
+
+double _availableWidth(BoxConstraints constraints, BuildContext context) {
+  return constraints.hasBoundedWidth
+      ? constraints.maxWidth
+      : MediaQuery.sizeOf(context).width;
+}
+
+double _nonNegative(double value) => value > 0 ? value : 0;
+
+String? _nullable(String text) {
+  final value = text.trim();
+  return value.isEmpty ? null : value;
+}
+
+num? _metricAverage(List<PersonDeliveryMetric> metrics, String type) {
+  final values = metrics
+      .where((metric) => metric.metricType == type)
+      .map((metric) => metric.metricValue)
+      .toList(growable: false);
+
+  if (values.isEmpty) {
+    return null;
+  }
+
+  return values.reduce((sum, value) => sum + value) / values.length;
+}
+
+num? _metricSum(List<PersonDeliveryMetric> metrics, String type) {
+  final values = metrics
+      .where((metric) => metric.metricType == type)
+      .map((metric) => metric.metricValue)
+      .toList(growable: false);
+
+  if (values.isEmpty) {
+    return null;
+  }
+
+  return values.reduce((sum, value) => sum + value);
+}
+
+num? _metricRatio(
+  List<PersonDeliveryMetric> metrics,
+  String numeratorType,
+  String denominatorType,
+) {
+  final numerator = _metricSum(metrics, numeratorType);
+  final denominator = _metricSum(metrics, denominatorType);
+
+  if (numerator == null || denominator == null || denominator == 0) {
+    return null;
+  }
+
+  return numerator / denominator;
+}
+
+num? _metricPercentage(
+  List<PersonDeliveryMetric> metrics,
+  String numeratorType,
+  String denominatorType, {
+  String? additionalDenominatorType,
+}) {
+  final numerator = _metricSum(metrics, numeratorType);
+  final denominator =
+      (_metricSum(metrics, denominatorType) ?? 0) +
+      (additionalDenominatorType == null
+          ? 0
+          : (_metricSum(metrics, additionalDenominatorType) ?? 0));
+
+  if (numerator == null || denominator == 0) {
+    return null;
+  }
+
+  return numerator / denominator * 100;
+}
+
+num? _metricLatestValue(List<PersonDeliveryMetric> metrics, String type) {
+  final values = metrics
+      .where((metric) => metric.metricType == type)
+      .toList(growable: false);
+
+  if (values.isEmpty) {
+    return null;
+  }
+
+  values.sort((a, b) {
+    final aDate = a.occurredAt ?? DateTime.fromMillisecondsSinceEpoch(0);
+    final bDate = b.occurredAt ?? DateTime.fromMillisecondsSinceEpoch(0);
+    return bDate.compareTo(aDate);
+  });
+
+  return values.first.metricValue;
+}
+
+String _compactMetric(num? value) {
+  if (value == null) {
+    return '-';
+  }
+
+  return value == value.roundToDouble()
+      ? value.toInt().toString()
+      : value.toStringAsFixed(1);
+}
+
+String _decimalMetric(num? value) {
+  return value == null ? '-' : value.toStringAsFixed(1);
+}
+
+String _percentageMetric(num? value) {
+  return value == null ? '-' : '${value.toStringAsFixed(0)}%';
+}
+
+String _unitMetric(num? value, String unit) {
+  if (value == null) {
+    return '-';
+  }
+
+  return '${_compactMetric(value)} $unit';
+}

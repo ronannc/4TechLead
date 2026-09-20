@@ -1,0 +1,273 @@
+class OneOnOneTemplate {
+  const OneOnOneTemplate({
+    required this.id,
+    required this.title,
+    required this.questions,
+    this.description,
+    this.isDefault = false,
+    this.active = true,
+  });
+
+  final int id;
+  final String title;
+  final String? description;
+  final List<String> questions;
+  final bool isDefault;
+  final bool active;
+
+  factory OneOnOneTemplate.fromJson(Map<String, dynamic> json) {
+    return OneOnOneTemplate(
+      id: json['id'] as int,
+      title: json['title'] as String,
+      description: json['description'] as String?,
+      questions: _stringList(json['questions']),
+      isDefault: json['is_default'] as bool? ?? false,
+      active: json['active'] as bool? ?? true,
+    );
+  }
+}
+
+class OneOnOneSession {
+  const OneOnOneSession({
+    required this.id,
+    required this.personId,
+    required this.title,
+    required this.status,
+    this.templateId,
+    this.documentSnapshot,
+    this.scheduledFor,
+    this.heldAt,
+    this.sentiment,
+    this.questions = const [],
+    this.answers = const {},
+    this.notes,
+    this.actionItems = const [],
+  });
+
+  final int id;
+  final int personId;
+  final int? templateId;
+  final Map<String, dynamic>? documentSnapshot;
+  final DateTime? scheduledFor;
+  final DateTime? heldAt;
+  final String title;
+  final String status;
+  final String? sentiment;
+  final List<String> questions;
+  final Map<String, dynamic> answers;
+  final String? notes;
+  final List<Map<String, dynamic>> actionItems;
+
+  factory OneOnOneSession.fromJson(Map<String, dynamic> json) {
+    return OneOnOneSession(
+      id: json['id'] as int,
+      personId: json['person_id'] as int,
+      templateId: json['one_on_one_template_id'] as int?,
+      documentSnapshot: json['document_snapshot'] == null
+          ? null
+          : Map<String, dynamic>.from(json['document_snapshot'] as Map),
+      scheduledFor: _date(json['scheduled_for'] as String?),
+      heldAt: _date(json['held_at'] as String?),
+      title: json['title'] as String,
+      status: json['status'] as String,
+      sentiment: json['sentiment'] as String?,
+      questions: _stringList(json['questions']),
+      answers: json['answers'] == null
+          ? const {}
+          : Map<String, dynamic>.from(json['answers'] as Map),
+      notes: json['notes'] as String?,
+      actionItems: _mapList(json['action_items']),
+    );
+  }
+}
+
+class PersonOneOnOneNote {
+  const PersonOneOnOneNote({
+    required this.id,
+    required this.personId,
+    required this.title,
+    required this.status,
+    this.createdBy,
+    this.sessionId,
+    this.body,
+    this.occurredAt,
+  });
+
+  final int id;
+  final int personId;
+  final int? createdBy;
+  final int? sessionId;
+  final String title;
+  final String? body;
+  final String status;
+  final DateTime? occurredAt;
+
+  factory PersonOneOnOneNote.fromJson(Map<String, dynamic> json) {
+    return PersonOneOnOneNote(
+      id: json['id'] as int,
+      personId: json['person_id'] as int,
+      createdBy: json['created_by'] as int?,
+      sessionId: json['one_on_one_session_id'] as int?,
+      title: json['title'] as String,
+      body: json['body'] as String?,
+      status: json['status'] as String,
+      occurredAt: _date(json['occurred_at'] as String?),
+    );
+  }
+}
+
+class DevelopmentPlan {
+  const DevelopmentPlan({
+    required this.id,
+    required this.personId,
+    required this.title,
+    required this.status,
+    required this.progress,
+    this.summary,
+    this.startDate,
+    this.endDate,
+    this.targetRole,
+    this.targetSeniority,
+    this.items = const [],
+  });
+
+  final int id;
+  final int personId;
+  final String title;
+  final String? summary;
+  final String status;
+  final DateTime? startDate;
+  final DateTime? endDate;
+  final String? targetRole;
+  final String? targetSeniority;
+  final int progress;
+  final List<DevelopmentPlanItem> items;
+
+  factory DevelopmentPlan.fromJson(Map<String, dynamic> json) {
+    return DevelopmentPlan(
+      id: json['id'] as int,
+      personId: json['person_id'] as int,
+      title: json['title'] as String,
+      summary: json['summary'] as String?,
+      status: json['status'] as String,
+      startDate: _date(json['start_date'] as String?),
+      endDate: _date(json['end_date'] as String?),
+      targetRole: json['target_role'] as String?,
+      targetSeniority: json['target_seniority'] as String?,
+      progress: json['progress'] as int? ?? 0,
+      items: [
+        for (final item in (json['items'] as List<dynamic>? ?? []))
+          DevelopmentPlanItem.fromJson(item as Map<String, dynamic>),
+      ],
+    );
+  }
+}
+
+class DevelopmentPlanItem {
+  const DevelopmentPlanItem({
+    required this.id,
+    required this.developmentPlanId,
+    required this.title,
+    required this.status,
+    required this.progress,
+    this.description,
+    this.competency,
+    this.evidence,
+    this.dueDate,
+  });
+
+  final int id;
+  final int developmentPlanId;
+  final String title;
+  final String? description;
+  final String? competency;
+  final String? evidence;
+  final String status;
+  final DateTime? dueDate;
+  final int progress;
+
+  factory DevelopmentPlanItem.fromJson(Map<String, dynamic> json) {
+    return DevelopmentPlanItem(
+      id: json['id'] as int,
+      developmentPlanId: json['development_plan_id'] as int,
+      title: json['title'] as String,
+      description: json['description'] as String?,
+      competency: json['competency'] as String?,
+      evidence: json['evidence'] as String?,
+      status: json['status'] as String,
+      dueDate: _date(json['due_date'] as String?),
+      progress: json['progress'] as int? ?? 0,
+    );
+  }
+}
+
+class GrowthSuggestions {
+  const GrowthSuggestions({
+    required this.oneOnOneQuestions,
+    required this.pdiSuggestions,
+    required this.kpiSuggestions,
+  });
+
+  final List<String> oneOnOneQuestions;
+  final List<Map<String, dynamic>> pdiSuggestions;
+  final List<Map<String, dynamic>> kpiSuggestions;
+
+  factory GrowthSuggestions.fromJson(Map<String, dynamic> json) {
+    return GrowthSuggestions(
+      oneOnOneQuestions: _stringList(json['one_on_one_questions']),
+      pdiSuggestions: _mapList(json['pdi_suggestions']),
+      kpiSuggestions: _mapList(json['kpi_suggestions']),
+    );
+  }
+}
+
+class DeliveryKpiSummary {
+  const DeliveryKpiSummary(this._data);
+
+  final Map<String, dynamic> _data;
+
+  factory DeliveryKpiSummary.fromJson(Map<String, dynamic> json) {
+    return DeliveryKpiSummary(json);
+  }
+
+  String get definitionVersion => _data['definition_version'] as String;
+
+  int get casesInScope => _intAt(['coverage', 'cases_in_scope']);
+  int get associatedCases => _intAt(['coverage', 'associated_cases']);
+  num? get associationRate => _numberAt(['coverage', 'association_rate_pct']);
+  int get publishedDeliveries => _intAt(['published_delivery_count', 'value']);
+  num get publishedStoryPoints =>
+      _numberAt(['published_story_points', 'value']) ?? 0;
+  num? get developmentCycleP50 =>
+      _numberAt(['development_cycle_time_hours', 'p50']);
+  num? get qaWaitP50 => _numberAt(['qa_wait_time_hours', 'p50']);
+  num? get qaFirstPassRate => _numberAt(['qa_first_pass_rate', 'value_pct']);
+  num? get qaReworkRate => _numberAt(['qa_rework_rate', 'value_pct']);
+  num get blockedHours => _numberAt(['blocked_time_hours', 'total']) ?? 0;
+
+  int _intAt(List<String> path) => _numberAt(path)?.toInt() ?? 0;
+
+  num? _numberAt(List<String> path) {
+    Object? value = _data;
+    for (final key in path) {
+      if (value is! Map<String, dynamic>) {
+        return null;
+      }
+      value = value[key];
+    }
+    return value is num ? value : null;
+  }
+}
+
+DateTime? _date(String? value) => value == null ? null : DateTime.parse(value);
+
+List<String> _stringList(Object? value) {
+  return [for (final item in (value as List<dynamic>? ?? [])) item.toString()];
+}
+
+List<Map<String, dynamic>> _mapList(Object? value) {
+  return [
+    for (final item in (value as List<dynamic>? ?? []))
+      Map<String, dynamic>.from(item as Map),
+  ];
+}

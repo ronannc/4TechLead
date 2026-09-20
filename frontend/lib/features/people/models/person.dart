@@ -1,0 +1,161 @@
+import 'package:equatable/equatable.dart';
+
+import 'contract_type.dart';
+import 'seniority_level.dart';
+
+class PersonDailyStatsSummary extends Equatable {
+  const PersonDailyStatsSummary({
+    required this.entryCount,
+    required this.averageActualSeconds,
+    required this.onTimePercentage,
+    required this.burnedPercentage,
+    required this.spokeTooLittlePercentage,
+  });
+
+  factory PersonDailyStatsSummary.fromJson(Map<String, dynamic> json) {
+    return PersonDailyStatsSummary(
+      entryCount: json['entry_count'] as int? ?? 0,
+      averageActualSeconds:
+          (json['average_actual_seconds'] as num?)?.toDouble() ?? 0,
+      onTimePercentage: (json['on_time_percentage'] as num?)?.toDouble() ?? 0,
+      burnedPercentage: (json['burned_percentage'] as num?)?.toDouble() ?? 0,
+      spokeTooLittlePercentage:
+          (json['spoke_too_little_percentage'] as num?)?.toDouble() ?? 0,
+    );
+  }
+
+  final int entryCount;
+  final double averageActualSeconds;
+  final double onTimePercentage;
+  final double burnedPercentage;
+  final double spokeTooLittlePercentage;
+
+  @override
+  List<Object?> get props => [
+    entryCount,
+    averageActualSeconds,
+    onTimePercentage,
+    burnedPercentage,
+    spokeTooLittlePercentage,
+  ];
+}
+
+/// Mirrors the backend's `PersonResource`. `age` is always server-computed
+/// from `birthDate` — never recomputed client-side, so there's a single
+/// source of truth for "today" in that calculation.
+class Person extends Equatable {
+  const Person({
+    required this.id,
+    required this.name,
+    required this.teamId,
+    this.birthDate,
+    this.age,
+    required this.position,
+    required this.contractType,
+    this.admissionDate,
+    required this.seniority,
+    required this.createdAt,
+    required this.updatedAt,
+    this.email,
+    this.phone,
+    this.githubUsername,
+    this.clickupUserId,
+    this.dailyStatsSummary,
+  });
+
+  final int id;
+  final String name;
+  final int teamId;
+  final DateTime? birthDate;
+  final int? age;
+  final String position;
+  final ContractType contractType;
+  final String? email;
+  final String? phone;
+  final String? githubUsername;
+  final String? clickupUserId;
+  final DateTime? admissionDate;
+  final SeniorityLevel seniority;
+  final PersonDailyStatsSummary? dailyStatsSummary;
+  final DateTime createdAt;
+  final DateTime updatedAt;
+
+  factory Person.fromJson(Map<String, dynamic> json) {
+    return Person(
+      id: json['id'] as int,
+      name: json['name'] as String,
+      teamId: json['team_id'] as int,
+      birthDate: json['birth_date'] == null
+          ? null
+          : DateTime.parse(json['birth_date'] as String),
+      age: json['age'] as int?,
+      position: json['position'] as String,
+      contractType: ContractType.fromApiValue(json['contract_type'] as String),
+      email: json['email'] as String?,
+      phone: json['phone'] as String?,
+      githubUsername: json['github_username'] as String?,
+      clickupUserId: json['clickup_user_id'] as String?,
+      admissionDate: json['admission_date'] == null
+          ? null
+          : DateTime.parse(json['admission_date'] as String),
+      seniority: SeniorityLevel.fromApiValue(json['seniority'] as String),
+      dailyStatsSummary: json['daily_stats_summary'] == null
+          ? null
+          : PersonDailyStatsSummary.fromJson(
+              json['daily_stats_summary'] as Map<String, dynamic>,
+            ),
+      createdAt: DateTime.parse(json['created_at'] as String),
+      updatedAt: DateTime.parse(json['updated_at'] as String),
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'id': id,
+      'name': name,
+      'team_id': teamId,
+      'birth_date': birthDate?.toIso8601String(),
+      'age': age,
+      'position': position,
+      'contract_type': contractType.apiValue,
+      'email': email,
+      'phone': phone,
+      'github_username': githubUsername,
+      'clickup_user_id': clickupUserId,
+      'admission_date': admissionDate?.toIso8601String(),
+      'seniority': seniority.apiValue,
+      'daily_stats_summary': dailyStatsSummary == null
+          ? null
+          : {
+              'entry_count': dailyStatsSummary!.entryCount,
+              'average_actual_seconds': dailyStatsSummary!.averageActualSeconds,
+              'on_time_percentage': dailyStatsSummary!.onTimePercentage,
+              'burned_percentage': dailyStatsSummary!.burnedPercentage,
+              'spoke_too_little_percentage':
+                  dailyStatsSummary!.spokeTooLittlePercentage,
+            },
+      'created_at': createdAt.toIso8601String(),
+      'updated_at': updatedAt.toIso8601String(),
+    };
+  }
+
+  @override
+  List<Object?> get props => [
+    id,
+    name,
+    teamId,
+    birthDate,
+    age,
+    position,
+    contractType,
+    email,
+    phone,
+    githubUsername,
+    clickupUserId,
+    admissionDate,
+    seniority,
+    dailyStatsSummary,
+    createdAt,
+    updatedAt,
+  ];
+}

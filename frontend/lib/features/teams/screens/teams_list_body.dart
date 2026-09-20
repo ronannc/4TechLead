@@ -1,0 +1,50 @@
+import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
+import 'package:intl/intl.dart';
+import 'package:provider/provider.dart';
+
+import '../../../core/routing/route_paths.dart';
+import '../../../core/widgets/tables/app_data_table.dart';
+import '../models/team.dart';
+import '../viewmodels/teams_list_view_model.dart';
+
+/// The loaded-state body of [TeamsListScreen], split into its own file/class
+/// so only this subtree rebuilds when the team list changes.
+class TeamsListBody extends StatelessWidget {
+  const TeamsListBody({super.key});
+
+  static final _createdAtFormat = DateFormat.yMMMd('pt_BR').add_Hm();
+
+  @override
+  Widget build(BuildContext context) {
+    return Selector<TeamsListViewModel, List<Team>>(
+      selector: (_, vm) => vm.teams,
+      builder: (context, teams, _) {
+        final viewModel = context.read<TeamsListViewModel>();
+
+        return AppDataTable<Team>(
+          items: teams,
+          title: 'Times cadastrados',
+          subtitle: 'Lista pesquisável de equipes ativas no app.',
+          itemIcon: Icons.groups_outlined,
+          itemCountLabel: (count) => count == 1 ? '1 time' : '$count times',
+          columns: [
+            AppDataColumn(label: 'Nome', cellBuilder: (team) => team.name),
+            AppDataColumn(
+              label: 'Criado em',
+              cellBuilder: (team) =>
+                  _createdAtFormat.format(team.createdAt.toLocal()),
+            ),
+          ],
+          onRowTap: (team) =>
+              context.push(RoutePaths.teamDetailPath(team.id.toString())),
+          onSearchChanged: viewModel.search,
+          searchHint: 'Buscar times...',
+          emptyMessage: viewModel.hasTeams
+              ? 'Nenhum resultado para a busca.'
+              : 'Nenhum time ainda.',
+        );
+      },
+    );
+  }
+}

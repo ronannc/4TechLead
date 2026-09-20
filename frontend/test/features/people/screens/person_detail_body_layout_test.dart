@@ -1,0 +1,561 @@
+import 'package:flutter/material.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:for_tech_lead/bootstrap.dart';
+import 'package:for_tech_lead/core/responsive/adaptive_scaffold.dart';
+import 'package:for_tech_lead/features/people/models/contract_type.dart';
+import 'package:for_tech_lead/features/people/models/person.dart';
+import 'package:for_tech_lead/features/people/models/person_growth_models.dart';
+import 'package:for_tech_lead/features/people/models/seniority_level.dart';
+import 'package:for_tech_lead/features/people/repositories/person_growth_repository.dart';
+import 'package:for_tech_lead/features/people/repositories/person_repository.dart';
+import 'package:for_tech_lead/features/people/screens/person_detail_body.dart';
+import 'package:for_tech_lead/features/people/screens/person_detail_screen.dart';
+import 'package:for_tech_lead/features/people/viewmodels/person_detail_view_model.dart';
+import 'package:for_tech_lead/features/people/viewmodels/person_growth_view_model.dart';
+import 'package:intl/date_symbol_data_local.dart';
+import 'package:mocktail/mocktail.dart';
+import 'package:provider/provider.dart';
+
+class _MockPersonRepository extends Mock implements PersonRepository {}
+
+class _MockPersonGrowthRepository extends Mock
+    implements PersonGrowthRepository {}
+
+void main() {
+  testWidgets(
+    'renders the complete person detail screen without layout errors',
+    (tester) async {
+      await initializeDateFormatting('pt_BR');
+      tester.view.physicalSize = const Size(390, 900);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      addTearDown(getIt.reset);
+
+      final personRepository = _MockPersonRepository();
+      final growthRepository = _MockPersonGrowthRepository();
+      _stubRepositories(
+        personRepository: personRepository,
+        growthRepository: growthRepository,
+      );
+
+      getIt.registerSingleton<PersonRepository>(personRepository);
+      getIt.registerSingleton<PersonGrowthRepository>(growthRepository);
+
+      await tester.pumpWidget(
+        const MaterialApp(home: PersonDetailScreen(personId: '1')),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Ada Lovelace'), findsOneWidget);
+      expect(find.text('Informações gerais'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets('renders inside the adaptive app shell without layout errors', (
+    tester,
+  ) async {
+    await initializeDateFormatting('pt_BR');
+    addTearDown(getIt.reset);
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    final personRepository = _MockPersonRepository();
+    final growthRepository = _MockPersonGrowthRepository();
+    _stubRepositories(
+      personRepository: personRepository,
+      growthRepository: growthRepository,
+    );
+
+    getIt.registerSingleton<PersonRepository>(personRepository);
+    getIt.registerSingleton<PersonGrowthRepository>(growthRepository);
+
+    for (final size in [const Size(390, 900), const Size(1280, 900)]) {
+      tester.view.physicalSize = size;
+      tester.view.devicePixelRatio = 1;
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: AdaptiveScaffold(
+            destinations: const [
+              AppNavDestination(
+                label: 'Início',
+                icon: Icons.home_outlined,
+                path: '/inicio',
+              ),
+              AppNavDestination(
+                label: 'Times',
+                icon: Icons.groups_outlined,
+                path: '/times',
+              ),
+            ],
+            selectedIndex: 1,
+            onDestinationSelected: (_) {},
+            child: const PersonDetailScreen(personId: '1'),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Ada Lovelace'), findsOneWidget);
+      expect(find.text('Informações gerais'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    }
+  });
+
+  testWidgets(
+    'renders without layout exceptions on mobile and desktop widths',
+    (tester) async {
+      await initializeDateFormatting('pt_BR');
+
+      for (final size in [const Size(390, 900), const Size(1280, 900)]) {
+        await _pumpLoadedBody(tester, size);
+
+        expect(find.text('Ada Lovelace'), findsOneWidget);
+        expect(find.text('Informações gerais'), findsOneWidget);
+        expect(tester.takeException(), isNull);
+
+        await _tapTab(tester, '1:1');
+        await tester.pumpAndSettle();
+        expect(find.text('Histórico de 1:1'), findsOneWidget);
+        expect(find.text('Planejar 1:1'), findsOneWidget);
+        expect(find.text('Templates'), findsNothing);
+        _expectOneOnOneHistorySpacing(tester);
+        expect(tester.takeException(), isNull);
+
+        for (final view in ['Sugestões', 'Histórico']) {
+          await _tapContextualTab(tester, view);
+          await tester.pumpAndSettle();
+          expect(tester.takeException(), isNull);
+        }
+
+        for (final tab in ['PDI', 'KPIs']) {
+          await _tapTab(tester, tab);
+          await tester.pumpAndSettle();
+          expect(tester.takeException(), isNull);
+
+          if (tab == 'KPIs') {
+            expect(find.text('KPIs de entregas'), findsOneWidget);
+            expect(find.text('Entregas publicadas'), findsOneWidget);
+            expect(find.text('QA no primeiro passe'), findsOneWidget);
+            expect(find.text('Tempo impedido'), findsOneWidget);
+            _expectAnalysisSpacing(tester);
+          }
+
+          if (tab == 'PDI') {
+            for (final view in ['Sugestões', 'Planos']) {
+              await _tapContextualTab(tester, view);
+              await tester.pumpAndSettle();
+              expect(tester.takeException(), isNull);
+            }
+
+            await tester.tap(find.text('Novo PDI'));
+            await tester.pumpAndSettle();
+            expect(find.text('Novo PDI'), findsOneWidget);
+            expect(tester.takeException(), isNull);
+            await tester.tap(find.byIcon(Icons.arrow_back));
+            await tester.pumpAndSettle();
+
+            await _tapVisible(tester, find.text('Adicionar ação'));
+            expect(find.text('Nova ação do PDI'), findsOneWidget);
+            expect(tester.takeException(), isNull);
+            await tester.tap(find.text('Cancelar'));
+            await tester.pumpAndSettle();
+          }
+        }
+      }
+    },
+  );
+
+  testWidgets(
+    'hides access token action when the user cannot generate access',
+    (tester) async {
+      await initializeDateFormatting('pt_BR');
+
+      await _pumpLoadedBody(
+        tester,
+        const Size(390, 900),
+        canGenerateAccessToken: false,
+      );
+
+      expect(find.text('Editar dados'), findsOneWidget);
+      expect(find.text('Gerar token'), findsNothing);
+      expect(find.text('1:1'), findsNothing);
+      expect(find.text('Novo 1:1'), findsNothing);
+      expect(find.text('Templates'), findsNothing);
+
+      await _tapTab(tester, 'PDI');
+      expect(find.text('Novo PDI'), findsNothing);
+      expect(find.text('PDI autonomia'), findsOneWidget);
+      expect(find.text('Editar'), findsNothing);
+      expect(find.text('Adicionar ação'), findsNothing);
+    },
+  );
+
+  testWidgets('keeps one on one templates out of the person detail', (
+    tester,
+  ) async {
+    await initializeDateFormatting('pt_BR');
+    await _pumpLoadedBody(tester, const Size(390, 900));
+
+    await _tapTab(tester, '1:1');
+    await tester.pumpAndSettle();
+
+    expect(find.text('Planejar 1:1'), findsOneWidget);
+    expect(find.text('Templates'), findsNothing);
+    expect(find.text('Configurar templates'), findsNothing);
+    expect(find.text('Criar template'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('keeps the generated access token visible after closing dialog', (
+    tester,
+  ) async {
+    await initializeDateFormatting('pt_BR');
+    final personRepository = _MockPersonRepository();
+    final growthRepository = _MockPersonGrowthRepository();
+
+    _stubRepositories(
+      personRepository: personRepository,
+      growthRepository: growthRepository,
+    );
+    when(
+      () => personRepository.createInvitationToken(1),
+    ).thenAnswer((_) async => 'ABC234');
+
+    await _pumpLoadedBody(
+      tester,
+      const Size(390, 900),
+      personRepository: personRepository,
+      growthRepository: growthRepository,
+    );
+
+    await tester.tap(find.text('Gerar token'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('ABC234'), findsAtLeastNWidgets(1));
+    await tester.tap(find.text('Fechar'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Token de acesso'), findsOneWidget);
+    expect(find.text('ABC234'), findsOneWidget);
+    expect(find.text('Copiar'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('loads one on one data on demand for each subtab', (
+    tester,
+  ) async {
+    await initializeDateFormatting('pt_BR');
+    final personRepository = _MockPersonRepository();
+    final growthRepository = _MockPersonGrowthRepository();
+
+    _stubRepositories(
+      personRepository: personRepository,
+      growthRepository: growthRepository,
+    );
+
+    await _pumpLoadedBody(
+      tester,
+      const Size(390, 900),
+      personRepository: personRepository,
+      growthRepository: growthRepository,
+    );
+
+    verifyNever(growthRepository.getTemplates);
+    verifyNever(
+      () => growthRepository.getSuggestions(
+        personId: 1,
+        focusArea: null,
+        context: null,
+      ),
+    );
+
+    await _tapTab(tester, '1:1');
+    await tester.pumpAndSettle();
+
+    verify(
+      () => growthRepository.getSessions(
+        personId: 1,
+        page: 1,
+        search: null,
+        status: null,
+        perPage: 10,
+      ),
+    ).called(1);
+    verifyNever(growthRepository.getTemplates);
+    verifyNever(
+      () => growthRepository.getSuggestions(
+        personId: 1,
+        focusArea: null,
+        context: null,
+      ),
+    );
+
+    await _tapContextualTab(tester, 'Sugestões');
+    await tester.pumpAndSettle();
+    verify(
+      () => growthRepository.getSuggestions(
+        personId: 1,
+        focusArea: null,
+        context: null,
+      ),
+    ).called(1);
+  });
+
+  testWidgets('renders when its parent has an unbounded height', (
+    tester,
+  ) async {
+    await initializeDateFormatting('pt_BR');
+    await _pumpLoadedBody(tester, const Size(390, 900), unboundedHeight: true);
+
+    expect(find.text('Ada Lovelace'), findsOneWidget);
+    expect(find.text('Informações gerais'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+}
+
+Future<void> _pumpLoadedBody(
+  WidgetTester tester,
+  Size size, {
+  bool unboundedHeight = false,
+  PersonRepository? personRepository,
+  PersonGrowthRepository? growthRepository,
+  bool canGenerateAccessToken = true,
+}) async {
+  tester.view.physicalSize = size;
+  tester.view.devicePixelRatio = 1;
+  addTearDown(tester.view.resetPhysicalSize);
+  addTearDown(tester.view.resetDevicePixelRatio);
+
+  final resolvedPersonRepository = personRepository ?? _MockPersonRepository();
+  final resolvedGrowthRepository =
+      growthRepository ?? _MockPersonGrowthRepository();
+
+  if (personRepository == null || growthRepository == null) {
+    _stubRepositories(
+      personRepository: resolvedPersonRepository,
+      growthRepository: resolvedGrowthRepository,
+    );
+  }
+
+  final personViewModel = PersonDetailViewModel(resolvedPersonRepository, 1);
+  final growthViewModel = PersonGrowthViewModel(resolvedGrowthRepository, 1);
+
+  await personViewModel.load();
+
+  await tester.pumpWidget(
+    MultiProvider(
+      providers: [
+        ChangeNotifierProvider<PersonDetailViewModel>.value(
+          value: personViewModel,
+        ),
+        ChangeNotifierProvider<PersonGrowthViewModel>.value(
+          value: growthViewModel,
+        ),
+      ],
+      child: MaterialApp(
+        home: Scaffold(
+          body: Padding(
+            padding: const EdgeInsets.all(16),
+            child: unboundedHeight
+                ? SingleChildScrollView(
+                    child: PersonDetailBody(
+                      key: UniqueKey(),
+                      canGenerateAccessToken: canGenerateAccessToken,
+                    ),
+                  )
+                : PersonDetailBody(
+                    key: UniqueKey(),
+                    canGenerateAccessToken: canGenerateAccessToken,
+                  ),
+          ),
+        ),
+      ),
+    ),
+  );
+  await tester.pumpAndSettle();
+}
+
+void _expectOneOnOneHistorySpacing(WidgetTester tester) {
+  final sectionTitle = tester.getTopLeft(find.text('Histórico de 1:1'));
+  final sectionSubtitle = tester.getRect(
+    find.text('Paginado e pesquisável por título/notas.'),
+  );
+  final searchField = tester.getRect(find.byType(TextField).first);
+
+  expect(searchField.left, sectionTitle.dx);
+  expect(searchField.top - sectionSubtitle.bottom, closeTo(8, 0.1));
+}
+
+void _expectAnalysisSpacing(WidgetTester tester) {
+  final summarySubtitle = tester.getRect(
+    find.text('Baseados em tarefas correlacionadas entre ClickUp e GitHub.'),
+  );
+  final firstMetricCard = tester.getRect(
+    find.ancestor(
+      of: find.text('Entregas publicadas'),
+      matching: find.byType(Card),
+    ),
+  );
+  final secondMetricCard = tester.getRect(
+    find.ancestor(
+      of: find.text('Pontos publicados'),
+      matching: find.byType(Card),
+    ),
+  );
+  final firstMetricLabel = tester.getRect(find.text('Entregas publicadas'));
+
+  expect(firstMetricCard.top, greaterThan(summarySubtitle.bottom));
+  if (secondMetricCard.top == firstMetricCard.top) {
+    expect(secondMetricCard.left - firstMetricCard.right, closeTo(8, 0.1));
+  } else {
+    expect(secondMetricCard.top - firstMetricCard.bottom, closeTo(8, 0.1));
+  }
+  expect(firstMetricLabel.left - firstMetricCard.left, closeTo(16, 0.1));
+}
+
+void _stubRepositories({
+  required PersonRepository personRepository,
+  required PersonGrowthRepository growthRepository,
+}) {
+  when(() => personRepository.getPerson(1)).thenAnswer((_) async => _person());
+  when(growthRepository.getTemplates).thenAnswer(
+    (_) async => [
+      const OneOnOneTemplate(
+        id: 1,
+        title: 'Template',
+        questions: ['Como foi o ciclo?'],
+      ),
+    ],
+  );
+  when(
+    () => growthRepository.getSessions(
+      personId: 1,
+      page: 1,
+      search: null,
+      status: null,
+      perPage: 10,
+    ),
+  ).thenAnswer(
+    (_) async => [
+      OneOnOneSession(
+        id: 1,
+        personId: 1,
+        title: '1:1 semanal',
+        status: 'completed',
+        heldAt: DateTime(2026, 8, 2),
+        notes: 'Falamos sobre evolução técnica.',
+      ),
+    ],
+  );
+  when(
+    () => growthRepository.getDevelopmentPlans(1),
+  ).thenAnswer((_) async => [_plan()]);
+  when(
+    growthRepository.getMyDevelopmentPlans,
+  ).thenAnswer((_) async => [_plan()]);
+  when(
+    () => growthRepository.getSuggestions(
+      personId: 1,
+      focusArea: null,
+      context: null,
+    ),
+  ).thenAnswer(
+    (_) async => const GrowthSuggestions(
+      oneOnOneQuestions: ['Qual apoio você precisa?'],
+      pdiSuggestions: [
+        {'title': 'Conduzir entrega', 'evidence': 'PR entregue'},
+      ],
+      kpiSuggestions: [
+        {'title': 'Acompanhar qualidade', 'diagnosis': 'Precisa evoluir'},
+      ],
+    ),
+  );
+  when(
+    () => growthRepository.getDeliveryKpis(1),
+  ).thenAnswer((_) async => _deliveryKpis());
+}
+
+DeliveryKpiSummary _deliveryKpis() {
+  return DeliveryKpiSummary.fromJson({
+    'definition_version': 'delivery-kpis.v1',
+    'coverage': {
+      'cases_in_scope': 3,
+      'associated_cases': 3,
+      'association_rate_pct': 100,
+    },
+    'published_delivery_count': {'value': 2},
+    'published_story_points': {'value': 5},
+    'development_cycle_time_hours': {'p50': 3},
+    'qa_wait_time_hours': {'p50': 1},
+    'qa_first_pass_rate': {'value_pct': 80},
+    'qa_rework_rate': {'value_pct': 20},
+    'blocked_time_hours': {'total': 0.5},
+  });
+}
+
+Future<void> _tapTab(WidgetTester tester, String label) async {
+  final tab = find.text(label);
+  await tester.ensureVisible(tab);
+  await tester.pumpAndSettle();
+  await tester.tap(tab);
+  await tester.pumpAndSettle();
+}
+
+Future<void> _tapContextualTab(WidgetTester tester, String label) async {
+  final tab = find.text(label).last;
+  await tester.ensureVisible(tab);
+  await tester.pumpAndSettle();
+  await tester.tap(tab);
+  await tester.pumpAndSettle();
+}
+
+Future<void> _tapVisible(WidgetTester tester, Finder finder) async {
+  await tester.ensureVisible(finder);
+  await tester.pumpAndSettle();
+  await tester.tap(finder);
+  await tester.pumpAndSettle();
+}
+
+Person _person() {
+  return Person(
+    id: 1,
+    name: 'Ada Lovelace',
+    teamId: 1,
+    position: 'Software Engineer',
+    contractType: ContractType.clt,
+    seniority: SeniorityLevel.senior,
+    dailyStatsSummary: const PersonDailyStatsSummary(
+      entryCount: 4,
+      averageActualSeconds: 95,
+      onTimePercentage: 75,
+      burnedPercentage: 25,
+      spokeTooLittlePercentage: 0,
+    ),
+    createdAt: DateTime(2026, 8, 2),
+    updatedAt: DateTime(2026, 8, 2),
+  );
+}
+
+DevelopmentPlan _plan() {
+  return const DevelopmentPlan(
+    id: 1,
+    personId: 1,
+    title: 'PDI autonomia',
+    status: 'active',
+    progress: 40,
+    summary: 'Evoluir decisões técnicas.',
+    items: [
+      DevelopmentPlanItem(
+        id: 1,
+        developmentPlanId: 1,
+        title: 'Conduzir desenho técnico',
+        status: 'todo',
+        progress: 0,
+        competency: 'Arquitetura',
+      ),
+    ],
+  );
+}
