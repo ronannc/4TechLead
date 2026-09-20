@@ -226,7 +226,10 @@ class _IntegrationsBodyState extends State<_IntegrationsBody> {
               ? 'Dados processados recebidos pelos webhooks.'
               : '${viewModel.webhookEventsTotal} eventos encontrados.',
         ),
-        _WebhookEventSummary(events: viewModel.webhookEvents),
+        _WebhookEventSummary(
+          events: viewModel.webhookEvents,
+          viewModel: viewModel,
+        ),
         _Surface(
           child: _WebhookEventFilters(
             viewModel: viewModel,
@@ -909,16 +912,22 @@ class _MetricTile extends StatelessWidget {
 }
 
 class _WebhookEventSummary extends StatelessWidget {
-  const _WebhookEventSummary({required this.events});
+  const _WebhookEventSummary({required this.events, required this.viewModel});
 
   final List<IntegrationWebhookEvent> events;
+  final IntegrationsViewModel viewModel;
 
   @override
   Widget build(BuildContext context) {
     final failures = events
         .where((event) => event.failureReason != null)
         .length;
-    final unmapped = events.where((event) => event.personId == null).length;
+    final unmapped = events.where((event) {
+      final isClickUp =
+          viewModel.integrationForWebhookEvent(event)?.provider == 'clickup';
+
+      return isClickUp ? event.taskAssignees.isEmpty : event.personId == null;
+    }).length;
     final processed = events
         .where((event) => event.status == 'processed')
         .length;
@@ -1169,7 +1178,7 @@ class _WebhookEventTable extends StatelessWidget {
             DataColumn(label: Text('Integração')),
             DataColumn(label: Text('Tipo')),
             DataColumn(label: Text('Status')),
-            DataColumn(label: Text('Pessoa')),
+            DataColumn(label: Text('Responsável')),
             DataColumn(label: Text('Métricas')),
             DataColumn(label: Text('')),
           ],
@@ -1720,8 +1729,14 @@ String _eventPersonName(
   IntegrationsViewModel viewModel,
   IntegrationWebhookEvent event,
 ) {
+  if (event.taskAssignees.isNotEmpty) {
+    return event.taskAssignees
+        .map((assignee) => assignee['name'] ?? assignee['id'] ?? '-')
+        .join(', ');
+  }
+
   final personId = event.personId;
-  return personId == null ? 'Sem pessoa' : viewModel.personName(personId);
+  return personId == null ? 'Sem responsável' : viewModel.personName(personId);
 }
 
 String _statusLabel(String status) {

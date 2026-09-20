@@ -632,6 +632,31 @@ it('uses root assigned users as task assignees without inventing the webhook act
         ->assertJsonPath('data.normalized_payload.task_assignees.1.id', '106048329');
 });
 
+it('uses nested typed assigned users as task assignees and ignores watchers', function (): void {
+    $token = 'clickup-nested-users-token';
+    IntegrationSystem::factory()->create([
+        'provider' => 'clickup',
+        'token_hash' => hash('sha256', $token),
+        'token_prefix' => substr($token, 0, 8),
+    ]);
+
+    $payload = clickUpAutomationPayload();
+    $payload['payload']['users'] = [
+        ['userid' => 106048330, 'type' => 'assigned'],
+        ['userid' => 106048329, 'type' => 'assigned'],
+        ['userid' => 230504877, 'type' => 'watcher'],
+        ['userid' => 106048329, 'type' => 'owner'],
+        ['userid' => 106048329, 'type' => 'creator'],
+    ];
+
+    $this->postJson('/api/v1/clickup-webhooks', $payload, [
+        'X-Integration-Token' => $token,
+    ])->assertOk()
+        ->assertJsonCount(2, 'data.normalized_payload.task_assignees')
+        ->assertJsonPath('data.normalized_payload.task_assignees.0.id', '106048330')
+        ->assertJsonPath('data.normalized_payload.task_assignees.1.id', '106048329');
+});
+
 it('records when clickup task enrichment is skipped because no provider api token is configured', function (): void {
     $token = 'clickup-missing-api-token';
     IntegrationSystem::factory()->create([

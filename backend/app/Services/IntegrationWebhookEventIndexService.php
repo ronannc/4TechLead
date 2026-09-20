@@ -25,6 +25,7 @@ final class IntegrationWebhookEventIndexService implements IndexServiceContract
                 'enrichment_status',
                 'failure_reason',
                 'payload_size_bytes',
+                'normalized_payload',
                 'received_at',
                 'created_at',
                 'updated_at',

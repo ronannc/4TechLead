@@ -159,6 +159,7 @@ class IntegrationWebhookEvent extends Equatable {
     required this.payload,
     this.payloadHash,
     this.payloadSizeBytes,
+    this.taskAssignees = const [],
     this.normalizedPayload,
     this.deliveryMetricsCount,
     this.deliveryMetrics = const [],
@@ -178,6 +179,7 @@ class IntegrationWebhookEvent extends Equatable {
   final Map<String, dynamic> payload;
   final String? payloadHash;
   final int? payloadSizeBytes;
+  final List<Map<String, dynamic>> taskAssignees;
   final Map<String, dynamic>? normalizedPayload;
   final int? deliveryMetricsCount;
   final List<PersonDeliveryMetric> deliveryMetrics;
@@ -198,6 +200,10 @@ class IntegrationWebhookEvent extends Equatable {
       payload: (json['payload'] as Map<String, dynamic>?) ?? const {},
       payloadHash: json['payload_hash'] as String?,
       payloadSizeBytes: _int(json['payload_size_bytes']),
+      taskAssignees: [
+        for (final item in (json['task_assignees'] as List<dynamic>? ?? []))
+          if (item is Map<String, dynamic>) item,
+      ],
       normalizedPayload: json['normalized_payload'] as Map<String, dynamic>?,
       deliveryMetricsCount: _int(json['delivery_metrics_count']),
       deliveryMetrics: [
@@ -223,6 +229,7 @@ class IntegrationWebhookEvent extends Equatable {
     payload,
     payloadHash,
     payloadSizeBytes,
+    taskAssignees,
     normalizedPayload,
     deliveryMetricsCount,
     deliveryMetrics,

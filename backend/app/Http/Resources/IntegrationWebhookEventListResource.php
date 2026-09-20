@@ -12,6 +12,8 @@ final class IntegrationWebhookEventListResource extends JsonResource
      */
     public function toArray(Request $request): array
     {
+        $taskAssignees = $this->normalized_payload['task_assignees'] ?? [];
+
         return [
             'id' => $this->id,
             'integration_system_id' => $this->integration_system_id,
@@ -26,6 +28,7 @@ final class IntegrationWebhookEventListResource extends JsonResource
             'processed_at' => $this->processed_at,
             'failure_reason' => $this->failure_reason,
             'payload_size_bytes' => $this->payload_size_bytes,
+            'task_assignees' => is_array($taskAssignees) ? $taskAssignees : [],
             'integration_system' => new IntegrationSystemResource($this->whenLoaded('integrationSystem')),
             'person' => new CompactPersonResource($this->whenLoaded('person')),
             'delivery_metrics_count' => $this->whenCounted('deliveryMetrics'),

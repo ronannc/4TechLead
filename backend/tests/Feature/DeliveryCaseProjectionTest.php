@@ -241,6 +241,32 @@ it('rebuilds deterministically when an older ClickUp event arrives after publica
         ->toContain(DeliveryMilestoneType::QaFailed, DeliveryMilestoneType::Published);
 });
 
+it('attributes a published task to its assigned implementer when it is the first event', function (): void {
+    $tenant = Tenant::factory()->create();
+    $integration = IntegrationSystem::factory()->create([
+        'tenant_id' => $tenant->id,
+        'provider' => 'clickup',
+    ]);
+    $developer = Person::factory()->create([
+        'tenant_id' => $tenant->id,
+        'clickup_user_id' => 'developer-published',
+    ]);
+
+    $published = clickUpProjectionEvent(
+        $integration,
+        'published-assigned-first',
+        '2026-09-08T09:00:00Z',
+        DeliveryStage::Published,
+        ['developer-published'],
+    );
+
+    app(DeliveryCaseProjector::class)->project($published);
+
+    expect(DeliveryCaseParticipant::query()->sole())
+        ->person_id->toBe($developer->id)
+        ->role->toBe(DeliveryParticipantRole::Implementer);
+});
+
 it('treats rejected as cancellation and not as completed delivery', function (): void {
     $tenant = Tenant::factory()->create();
     $integration = IntegrationSystem::factory()->create([

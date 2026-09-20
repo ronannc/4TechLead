@@ -79,10 +79,12 @@ final class ClickUpWebhookIngestService
             'enrichment_error' => $snapshot['task_enrichment_error'] ?? null,
         ])->save();
 
-        if (($snapshot['task_enrichment_status'] ?? null) === 'enriched') {
-            app(DeliveryCaseProjector::class)->project($event->refresh());
-            app(DeliveryMetricIngestService::class)->ingest($event->refresh());
-        }
+        // O payload do webhook pode já conter os responsáveis mesmo quando a
+        // consulta complementar à API não foi possível. Sempre reprojete para
+        // que esse dado também atualize participantes e KPIs.
+        $refreshedEvent = $event->refresh();
+        app(DeliveryCaseProjector::class)->project($refreshedEvent);
+        app(DeliveryMetricIngestService::class)->ingest($refreshedEvent);
 
         return $event->refresh()->load(['integrationSystem', 'person', 'deliveryMetrics']);
     }
@@ -314,7 +316,12 @@ final class ClickUpWebhookIngestService
         // assigned are task assignees; watchers, owner and creator must not
         // be treated as the actor who performed the change.
         if ($taskAssignees === []) {
-            $taskAssignees = $this->assignedWebhookUsers(Arr::get($payload, 'users', []));
+            $taskAssignees = $this->assignedWebhookUsers(
+                array_merge(
+                    (array) Arr::get($task, 'users', []),
+                    (array) Arr::get($payload, 'users', []),
+                ),
+            );
         }
 
         $taskTags = $this->tagNames(Arr::get($task, 'tags', []));
@@ -633,7 +640,24 @@ final class ClickUpWebhookIngestService
      */
     protected function taskAssignees(array $task): array
     {
-        $users = Arr::get($task, 'users', Arr::get($task, 'assignees', []));
+        $users = Arr::get($task, 'assignees');
+
+        if (! is_array($users)) {
+            $users = Arr::get($task, 'users', []);
+
+            $assignedUsers = array_values(array_filter(
+                $users,
+                static fn (mixed $user): bool => is_array($user)
+                    && Arr::get($user, 'type') === 'assigned',
+            ));
+
+            // Alguns payloads antigos não informam o tipo do usuário. Neles,
+            // preservamos a lista como assignees; quando há tipos, somente
+            // assigned representa os responsáveis pela tarefa.
+            if ($assignedUsers !== []) {
+                $users = $assignedUsers;
+            }
+        }
 
         if (! is_array($users)) {
             return [];

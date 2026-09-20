@@ -373,6 +373,7 @@ final class DeliveryCaseProjector
             DeliveryStage::Analysis,
             DeliveryStage::InProgress,
             DeliveryStage::Blocked,
+            DeliveryStage::Published,
         ], true)) {
             return DeliveryParticipantRole::Implementer;
         }
