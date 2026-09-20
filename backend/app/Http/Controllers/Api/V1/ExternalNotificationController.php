@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
 use App\Http\Requests\ExternalNotification\IndexExternalNotificationRequest;
+use App\Http\Resources\ExternalNotificationListResource;
 use App\Http\Resources\ExternalNotificationResource;
 use App\Models\ExternalNotification;
 use Illuminate\Http\JsonResponse;
@@ -18,13 +19,25 @@ final class ExternalNotificationController extends Controller
         $filters = (array) ($validated['filters'] ?? []);
 
         $query = ExternalNotification::query()
-            ->with('integrationSystem')
+            ->select([
+                'id',
+                'integration_system_id',
+                'event_id',
+                'title',
+                'message',
+                'type',
+                'severity',
+                'source_ref',
+                'received_at',
+                'created_at',
+            ])
+            ->with('integrationSystem:id,name,provider')
             ->filter($filters)
             ->search($validated['search'] ?? null)
             ->orderByDesc('received_at')
             ->orderByDesc('id');
 
-        return ExternalNotificationResource::collection(
+        return ExternalNotificationListResource::collection(
             $query->paginate(
                 perPage: min(100, max(1, (int) ($validated['per_page'] ?? 15))),
                 page: max(1, (int) ($validated['page'] ?? 1)),

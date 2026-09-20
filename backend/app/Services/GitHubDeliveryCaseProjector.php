@@ -67,10 +67,16 @@ final class GitHubDeliveryCaseProjector
      */
     private function eventsFor(DeliveryCase $deliveryCase): Collection
     {
-        $events = IntegrationWebhookEvent::query()
+        $taskEvents = IntegrationWebhookEvent::query()
             ->withoutGlobalScope('tenant')
             ->where('tenant_id', $deliveryCase->tenant_id)
             ->where('normalized_payload->source', 'github')
+            ->where(function ($query) use ($deliveryCase): void {
+                $query
+                    ->where('task_ref', $deliveryCase->task_ref)
+                    ->orWhereJsonContains('normalized_payload->task_refs', $deliveryCase->task_ref);
+            })
+            ->select($this->eventColumns())
             ->get();
         $caseExternalIds = DeliveryCaseExternalLink::query()
             ->withoutGlobalScopes()
@@ -82,7 +88,19 @@ final class GitHubDeliveryCaseProjector
             ->pluck('external_id')
             ->all();
 
-        return $events->filter(function (IntegrationWebhookEvent $event) use ($deliveryCase, $caseExternalIds): bool {
+        if ($caseExternalIds === []) {
+            return $this->sortEvents($taskEvents);
+        }
+
+        $fallbackEvents = IntegrationWebhookEvent::query()
+            ->withoutGlobalScope('tenant')
+            ->where('tenant_id', $deliveryCase->tenant_id)
+            ->where('normalized_payload->source', 'github')
+            ->whereNull('task_ref')
+            ->select($this->eventColumns())
+            ->get();
+
+        return $this->sortEvents($taskEvents->concat($fallbackEvents)->filter(function (IntegrationWebhookEvent $event) use ($deliveryCase, $caseExternalIds): bool {
             if ((bool) data_get($event->normalized_payload, 'task_ref_ambiguous', false)) {
                 return false;
             }
@@ -92,7 +110,35 @@ final class GitHubDeliveryCaseProjector
             }
 
             return array_intersect($caseExternalIds, $this->externalIdsFor($event)) !== [];
-        })->sort(function (IntegrationWebhookEvent $left, IntegrationWebhookEvent $right): int {
+        }));
+    }
+
+    /**
+     * @return array<int, string>
+     */
+    private function eventColumns(): array
+    {
+        return [
+            'id',
+            'tenant_id',
+            'integration_system_id',
+            'person_id',
+            'event_id',
+            'event_type',
+            'task_ref',
+            'normalized_payload',
+            'occurred_at',
+            'received_at',
+        ];
+    }
+
+    /**
+     * @param  Collection<int, IntegrationWebhookEvent>  $events
+     * @return Collection<int, IntegrationWebhookEvent>
+     */
+    private function sortEvents(Collection $events): Collection
+    {
+        return $events->sort(function (IntegrationWebhookEvent $left, IntegrationWebhookEvent $right): int {
             $occurredAtComparison = strcmp(
                 $this->occurredAt($left)->format('U.u'),
                 $this->occurredAt($right)->format('U.u'),

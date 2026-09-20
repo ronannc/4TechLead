@@ -153,6 +153,20 @@ final class DeliveryMetricIngestService
         $events = IntegrationWebhookEvent::query()
             ->where('tenant_id', $event->tenant_id)
             ->whereIn('event_type', ['pull_request.closed', 'clickup_automation', 'taskStatusUpdated'])
+            ->where(function ($query) use ($references): void {
+                $query->whereIn('task_ref', $references);
+
+                foreach ($references as $reference) {
+                    $query->orWhereJsonContains('normalized_payload->task_refs', $reference);
+                }
+            })
+            ->select([
+                'id',
+                'person_id',
+                'event_type',
+                'task_ref',
+                'normalized_payload',
+            ])
             ->get();
 
         $githubEvents = $events->filter(fn (IntegrationWebhookEvent $candidate): bool => str_starts_with($candidate->event_type, 'pull_request.')

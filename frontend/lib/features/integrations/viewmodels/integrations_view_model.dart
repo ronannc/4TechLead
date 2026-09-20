@@ -229,17 +229,22 @@ class IntegrationsViewModel extends BaseViewModel {
   }
 
   Future<void> _loadAll() async {
-    final loadedSystems = await _repository.getSystems();
-    final loadedPeople = await _personRepository.getPeople(perPage: 100);
-    final loadedIdentities = await _repository.getExternalIdentities();
+    final systemsFuture = _repository.getSystems();
+    final peopleFuture = _personRepository.getPeople(perPage: 100);
+    final identitiesFuture = _repository.getExternalIdentities();
+
+    final loadedSystems = await systemsFuture;
+    final loadedPeople = await peopleFuture;
+    final loadedIdentities = await identitiesFuture;
 
     systems = loadedSystems;
     people = loadedPeople;
     identities = loadedIdentities;
     systemsPage = 1;
     identitiesPage = 1;
-    await _loadMetrics(page: 1);
-    await _loadWebhookEvents(page: 1);
+    final metricsFuture = _loadMetrics(page: 1);
+    final webhookEventsFuture = _loadWebhookEvents(page: 1);
+    await Future.wait([metricsFuture, webhookEventsFuture]);
   }
 
   Future<void> _loadMetrics({required int page}) async {

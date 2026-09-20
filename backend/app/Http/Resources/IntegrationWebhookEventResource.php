@@ -32,7 +32,7 @@ class IntegrationWebhookEventResource extends JsonResource
             'payload_size_bytes' => $this->payload_size_bytes,
             'normalized_payload' => $this->normalized_payload,
             'integration_system' => new IntegrationSystemResource($this->whenLoaded('integrationSystem')),
-            'person' => new PersonResource($this->whenLoaded('person')),
+            'person' => new CompactPersonResource($this->whenLoaded('person')),
             'delivery_metrics_count' => $this->whenCounted('deliveryMetrics'),
             'delivery_metrics' => PersonDeliveryMetricResource::collection($this->whenLoaded('deliveryMetrics')),
             'received_at' => $this->received_at,

@@ -6,6 +6,7 @@ use App\DTOs\ListParams;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\IntegrationWebhook\IndexIntegrationWebhookEventRequest;
 use App\Http\Resources\IntegrationWebhookEventResource;
+use App\Http\Resources\IntegrationWebhookEventListResource;
 use App\Models\IntegrationWebhookEvent;
 use App\Services\ClickUpWebhookIngestService;
 use App\Services\IntegrationWebhookEventIndexService;
@@ -22,7 +23,7 @@ final class IntegrationWebhookEventController extends Controller
     {
         $this->authorize('viewAny', IntegrationWebhookEvent::class);
 
-        return IntegrationWebhookEventResource::collection(
+        return IntegrationWebhookEventListResource::collection(
             $this->indexService->index(ListParams::fromRequest($request))
         )->response();
     }

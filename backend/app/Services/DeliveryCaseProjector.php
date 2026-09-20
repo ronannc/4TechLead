@@ -82,9 +82,22 @@ final class DeliveryCaseProjector
             ->where('normalized_payload->source', 'clickup')
             ->where(function (Builder $query) use ($taskReference): void {
                 $query
-                    ->whereJsonContains('normalized_payload->task_refs', $taskReference)
+                    ->where('task_ref', $taskReference)
+                    ->orWhereJsonContains('normalized_payload->task_refs', $taskReference)
                     ->orWhere('normalized_payload->task_custom_id', $taskReference);
             })
+            ->select([
+                'id',
+                'tenant_id',
+                'integration_system_id',
+                'person_id',
+                'event_id',
+                'event_type',
+                'task_ref',
+                'normalized_payload',
+                'occurred_at',
+                'received_at',
+            ])
             ->get()
             ->filter(fn (IntegrationWebhookEvent $candidate): bool => in_array(
                 $taskReference,

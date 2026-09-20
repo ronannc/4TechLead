@@ -20,27 +20,41 @@ final class DeliveryCaseHistoryProjector
      */
     public function project(DeliveryCase $deliveryCase, Collection $events): void
     {
-        $this->projectAssignments($deliveryCase);
-        $this->projectStatusHistory($deliveryCase, $events);
-        $this->projectGithubActivities($deliveryCase, $events);
+        $participants = $this->implementerParticipants($deliveryCase);
+        $this->projectAssignments($deliveryCase, $participants);
+        $assignmentHistory = $this->assignmentHistory($deliveryCase);
+        $this->projectStatusHistory($deliveryCase, $events, $participants);
+        $this->projectGithubActivities($deliveryCase, $events, $assignmentHistory);
         $this->updateCurrentAssignee($deliveryCase);
     }
 
-    private function projectAssignments(DeliveryCase $deliveryCase): void
+    /**
+     * @return Collection<int, DeliveryCaseParticipant>
+     */
+    private function implementerParticipants(DeliveryCase $deliveryCase): Collection
     {
-        $participants = DeliveryCaseParticipant::query()
+        return DeliveryCaseParticipant::query()
             ->withoutGlobalScopes()
             ->where('delivery_case_id', $deliveryCase->id)
             ->where('role', DeliveryParticipantRole::Implementer->value)
             ->orderBy('valid_from')
             ->get();
+    }
+
+    /**
+     * @param  Collection<int, DeliveryCaseParticipant>  $participants
+     */
+    private function projectAssignments(DeliveryCase $deliveryCase, Collection $participants): void
+    {
+        $sourceRefs = $participants->pluck('source_ref')->filter()->values();
+        $sourceWebhookIds = $sourceRefs->isEmpty()
+            ? collect()
+            : IntegrationWebhookEvent::query()
+                ->withoutGlobalScopes()
+                ->whereIn('event_id', $sourceRefs)
+                ->pluck('id', 'event_id');
 
         foreach ($participants as $participant) {
-            $sourceWebhookId = IntegrationWebhookEvent::query()
-                ->withoutGlobalScopes()
-                ->where('event_id', $participant->source_ref)
-                ->value('id');
-
             DeliveryCaseAssignmentHistory::query()->withoutGlobalScopes()->updateOrCreate(
                 [
                     'delivery_case_id' => $deliveryCase->id,
@@ -49,7 +63,7 @@ final class DeliveryCaseHistoryProjector
                 ],
                 [
                     'tenant_id' => $deliveryCase->tenant_id,
-                    'source_webhook_id' => $sourceWebhookId,
+                    'source_webhook_id' => $sourceWebhookIds->get($participant->source_ref),
                     'unassigned_at' => $participant->valid_to,
                     'metadata' => $participant->metadata,
                 ],
@@ -58,9 +72,13 @@ final class DeliveryCaseHistoryProjector
     }
 
     /**
-     * @param  Collection<int, IntegrationWebhookEvent>  $events
+     * @param  Collection<int, DeliveryCaseParticipant>  $participants
      */
-    private function projectStatusHistory(DeliveryCase $deliveryCase, Collection $events): void
+    private function projectStatusHistory(
+        DeliveryCase $deliveryCase,
+        Collection $events,
+        Collection $participants,
+    ): void
     {
         $previousStage = null;
 
@@ -76,12 +94,7 @@ final class DeliveryCaseHistoryProjector
             }
 
             $occurredAt = $this->occurredAt($event);
-            $assigneeId = DeliveryCaseParticipant::query()
-                ->withoutGlobalScopes()
-                ->where('delivery_case_id', $deliveryCase->id)
-                ->where('role', DeliveryParticipantRole::Implementer->value)
-                ->activeAt($occurredAt)
-                ->value('person_id');
+            $assigneeId = $this->assigneeAt($participants, $occurredAt);
 
             DeliveryCaseStatusHistory::query()->withoutGlobalScopes()->updateOrCreate(
                 [
@@ -108,9 +121,13 @@ final class DeliveryCaseHistoryProjector
     }
 
     /**
-     * @param  Collection<int, IntegrationWebhookEvent>  $events
+     * @param  Collection<int, DeliveryCaseAssignmentHistory>  $assignmentHistory
      */
-    private function projectGithubActivities(DeliveryCase $deliveryCase, Collection $events): void
+    private function projectGithubActivities(
+        DeliveryCase $deliveryCase,
+        Collection $events,
+        Collection $assignmentHistory,
+    ): void
     {
         foreach ($events as $event) {
             if (data_get($event->normalized_payload, 'source') !== 'github') {
@@ -125,15 +142,7 @@ final class DeliveryCaseHistoryProjector
 
             $payload = $event->normalized_payload ?? [];
             $occurredAt = $this->occurredAt($event);
-            $assigneeId = DeliveryCaseAssignmentHistory::query()
-                ->withoutGlobalScopes()
-                ->where('delivery_case_id', $deliveryCase->id)
-                ->where('assigned_at', '<=', $occurredAt)
-                ->where(function ($query) use ($occurredAt): void {
-                    $query->whereNull('unassigned_at')->orWhere('unassigned_at', '>', $occurredAt);
-                })
-                ->orderByDesc('assigned_at')
-                ->value('assignee_person_id');
+            $assigneeId = $this->assignmentAt($assignmentHistory, $occurredAt);
 
             DeliveryCaseActivity::query()->withoutGlobalScopes()->updateOrCreate(
                 [
@@ -162,6 +171,42 @@ final class DeliveryCaseHistoryProjector
                 ],
             );
         }
+    }
+
+    /**
+     * @return Collection<int, DeliveryCaseAssignmentHistory>
+     */
+    private function assignmentHistory(DeliveryCase $deliveryCase): Collection
+    {
+        return DeliveryCaseAssignmentHistory::query()
+            ->withoutGlobalScopes()
+            ->where('delivery_case_id', $deliveryCase->id)
+            ->orderBy('assigned_at')
+            ->get();
+    }
+
+    /**
+     * @param  Collection<int, DeliveryCaseParticipant>  $participants
+     */
+    private function assigneeAt(Collection $participants, CarbonInterface $occurredAt): ?int
+    {
+        return $participants
+            ->reverse()
+            ->first(fn (DeliveryCaseParticipant $participant): bool => $participant->valid_from->lessThanOrEqualTo($occurredAt)
+                && ($participant->valid_to === null || $participant->valid_to->greaterThan($occurredAt)))
+            ?->person_id;
+    }
+
+    /**
+     * @param  Collection<int, DeliveryCaseAssignmentHistory>  $assignmentHistory
+     */
+    private function assignmentAt(Collection $assignmentHistory, CarbonInterface $occurredAt): ?int
+    {
+        return $assignmentHistory
+            ->reverse()
+            ->first(fn (DeliveryCaseAssignmentHistory $assignment): bool => $assignment->assigned_at->lessThanOrEqualTo($occurredAt)
+                && ($assignment->unassigned_at === null || $assignment->unassigned_at->greaterThan($occurredAt)))
+            ?->assignee_person_id;
     }
 
     private function updateCurrentAssignee(DeliveryCase $deliveryCase): void
