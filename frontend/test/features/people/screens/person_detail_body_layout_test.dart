@@ -395,17 +395,17 @@ void _expectAnalysisSpacing(WidgetTester tester) {
   );
   final firstMetricCard = tester.getRect(
     find.ancestor(
-      of: find.text('Entregas publicadas'),
+      of: find.text('Tarefas atribuídas'),
       matching: find.byType(Card),
     ),
   );
   final secondMetricCard = tester.getRect(
     find.ancestor(
-      of: find.text('Pontos publicados'),
+      of: find.text('Entregas publicadas'),
       matching: find.byType(Card),
     ),
   );
-  final firstMetricLabel = tester.getRect(find.text('Entregas publicadas'));
+  final firstMetricLabel = tester.getRect(find.text('Tarefas atribuídas'));
 
   expect(firstMetricCard.top, greaterThan(summarySubtitle.bottom));
   if (secondMetricCard.top == firstMetricCard.top) {

@@ -179,7 +179,7 @@ final class DeliveryMetricIngestService
             && $candidate->person_id !== null);
         $clickUpEvents = $events->filter(fn (IntegrationWebhookEvent $candidate): bool => ! str_starts_with($candidate->event_type, 'pull_request.')
             && $this->sharesReference($references, $candidate)
-            && $this->isCompletedStatus(data_get($candidate->normalized_payload, 'history_after')));
+            && $this->isCompletedStatus($candidate->normalized_payload ?? []));
 
         foreach ($githubEvents as $githubEvent) {
             foreach ($clickUpEvents as $clickUpEvent) {
@@ -210,8 +210,15 @@ final class DeliveryMetricIngestService
         return array_values(array_filter((array) data_get($event->normalized_payload, 'task_refs')));
     }
 
-    private function isCompletedStatus(mixed $status): bool
+    /**
+     * @param  array<string, mixed>  $payload
+     */
+    private function isCompletedStatus(array $payload): bool
     {
-        return DeliveryStage::fromClickUpStatus($status)?->isDelivery() === true;
+        $status = data_get($payload, 'history_after')
+            ?? data_get($payload, 'task_status');
+
+        return DeliveryStage::fromClickUpStatus($status)?->isDelivery() === true
+            || data_get($payload, 'task_stage') === DeliveryStage::Published->value;
     }
 }

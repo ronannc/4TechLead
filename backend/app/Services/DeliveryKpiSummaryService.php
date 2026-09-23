@@ -69,6 +69,25 @@ final class DeliveryKpiSummaryService
 
         $eligibleCases = (clone $eligibleQuery)->count();
 
+        $assignedQuery = clone $scopeQuery;
+
+        $this->applyParticipantFilter(
+            $assignedQuery,
+            $tenantId,
+            $includedConfidenceValues,
+            $filters['person_id'] ?? null,
+        );
+
+        $assignedCases = $assignedQuery
+            ->with([
+                'milestones' => fn ($query) => $query
+                    ->withoutGlobalScopes()
+                    ->where('tenant_id', $tenantId)
+                    ->oldest('occurred_at')
+                    ->oldest('id'),
+            ])
+            ->get();
+
         $this->applyParticipantFilter(
             $eligibleQuery,
             $tenantId,
@@ -106,7 +125,23 @@ final class DeliveryKpiSummaryService
         $qaFirstPassCount = 0;
         $qaReworkCount = 0;
         $qaOutcomeSampleSize = 0;
-        $publishedCases = collect();
+        $publishedCases = $assignedCases->filter(
+            fn (DeliveryCase $case): bool => $this->hasMilestone(
+                $case->milestones,
+                DeliveryMilestoneType::Published,
+            ),
+        );
+        $rejectedCases = $assignedCases->filter(
+            fn (DeliveryCase $case): bool => $case->canceled_at !== null
+                || $case->current_stage === DeliveryStage::Rejected
+                || $this->hasMilestone($case->milestones, DeliveryMilestoneType::Rejected),
+        );
+        $blockedCases = $assignedCases->filter(
+            fn (DeliveryCase $case): bool => $this->hasMilestone(
+                $case->milestones,
+                DeliveryMilestoneType::Blocked,
+            ),
+        );
         $blockedTotalHours = 0.0;
         $blockedClosedIntervalCount = 0;
         $blockedOpenIntervalCount = 0;
@@ -150,10 +185,6 @@ final class DeliveryKpiSummaryService
                 }
             }
 
-            if ($this->hasMilestone($milestones, DeliveryMilestoneType::Published)) {
-                $publishedCases->push($case);
-            }
-
             $blocked = $this->blockedIntervals($milestones);
             $blockedTotalHours += $blocked['total_hours'];
             $blockedClosedIntervalCount += $blocked['closed_intervals'];
@@ -193,6 +224,34 @@ final class DeliveryKpiSummaryService
                 'timestamp_completeness_rate_pct' => $this->percentage(
                     $completeFlowTimestampCount,
                     $associatedCases,
+                ),
+            ],
+            'assigned_task_count' => [
+                'value' => $assignedCases->count(),
+                'sample_size' => $assignedCases->count(),
+            ],
+            'not_published_task_count' => [
+                'value' => $assignedCases->count() - $publishedCases->count(),
+                'sample_size' => $assignedCases->count(),
+                'coverage_rate_pct' => $this->percentage(
+                    $assignedCases->count() - $publishedCases->count(),
+                    $assignedCases->count(),
+                ),
+            ],
+            'rejected_task_count' => [
+                'value' => $rejectedCases->count(),
+                'sample_size' => $assignedCases->count(),
+                'coverage_rate_pct' => $this->percentage(
+                    $rejectedCases->count(),
+                    $assignedCases->count(),
+                ),
+            ],
+            'blocked_task_count' => [
+                'value' => $blockedCases->count(),
+                'sample_size' => $assignedCases->count(),
+                'coverage_rate_pct' => $this->percentage(
+                    $blockedCases->count(),
+                    $assignedCases->count(),
                 ),
             ],
             'published_delivery_count' => [

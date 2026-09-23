@@ -644,6 +644,7 @@ it('uses nested typed assigned users as task assignees and ignores watchers', fu
     $payload['payload']['users'] = [
         ['userid' => 106048330, 'type' => 'assigned'],
         ['userid' => 106048329, 'type' => 'assigned'],
+        ['userid' => 106048329, 'type' => 'assigned'],
         ['userid' => 230504877, 'type' => 'watcher'],
         ['userid' => 106048329, 'type' => 'owner'],
         ['userid' => 106048329, 'type' => 'creator'],
@@ -655,6 +656,60 @@ it('uses nested typed assigned users as task assignees and ignores watchers', fu
         ->assertJsonCount(2, 'data.normalized_payload.task_assignees')
         ->assertJsonPath('data.normalized_payload.task_assignees.0.id', '106048330')
         ->assertJsonPath('data.normalized_payload.task_assignees.1.id', '106048329');
+});
+
+it('crosses an automation payload with a published task status and a merged github pull request', function (): void {
+    $tenantId = Tenant::factory()->create()->id;
+    $clickUpToken = 'clickup-automation-crossing-token';
+    $githubToken = 'github-automation-crossing-token';
+    IntegrationSystem::factory()->create([
+        'tenant_id' => $tenantId,
+        'provider' => 'clickup',
+        'token_hash' => hash('sha256', $clickUpToken),
+        'token_prefix' => substr($clickUpToken, 0, 8),
+    ]);
+    $github = IntegrationSystem::factory()->create([
+        'tenant_id' => $tenantId,
+        'provider' => 'github',
+        'token_hash' => hash('sha256', $githubToken),
+        'webhook_secret' => $githubToken,
+        'token_prefix' => substr($githubToken, 0, 8),
+    ]);
+    $person = Person::factory()->create([
+        'tenant_id' => $tenantId,
+        'github_username' => 'lucas-github',
+    ]);
+
+    $this->postJson('/api/v1/clickup-webhooks', clickUpAutomationPayload([
+        'date' => '2026-08-28T18:00:00Z',
+        'payload' => [
+            'status' => ['status' => 'Publicado'],
+        ],
+    ]), [
+        'X-Integration-Token' => $clickUpToken,
+    ])->assertOk();
+
+    $this->postJson('/api/v1/github-webhooks', githubNativePullRequestPayload([
+        'action' => 'closed',
+        'pull_request' => [
+            'state' => 'closed',
+            'merged' => true,
+            'closed_at' => '2026-08-27T10:00:00Z',
+            'merged_at' => '2026-08-27T10:00:00Z',
+        ],
+    ]), [
+        'Authorization' => "Bearer {$githubToken}",
+        'X-GitHub-Delivery' => 'automation-crossing-delivery-1',
+        'X-GitHub-Event' => 'pull_request',
+    ])->assertOk();
+
+    $githubEvent = $github->webhookEvents()->firstOrFail();
+
+    expect(PersonDeliveryMetric::query()->where('person_id', $person->id)
+        ->where('integration_webhook_event_id', $githubEvent->id)
+        ->pluck('metric_type')->all())->toContain(
+            'task_pull_request_link_count',
+        );
 });
 
 it('records when clickup task enrichment is skipped because no provider api token is configured', function (): void {

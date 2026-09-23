@@ -52,6 +52,10 @@ it('summarizes only explainable delivery KPIs from correlated cases', function (
     expect($summary['definition_version'])->toBe('delivery-kpis.v1')
         ->and($summary['coverage']['cases_in_scope'])->toBe(2)
         ->and($summary['coverage']['canceled_cases_excluded'])->toBe(0)
+        ->and($summary['assigned_task_count']['value'])->toBe(2)
+        ->and($summary['not_published_task_count']['value'])->toBe(0)
+        ->and($summary['rejected_task_count']['value'])->toBe(0)
+        ->and($summary['blocked_task_count']['value'])->toBe(2)
         ->and($summary['published_delivery_count']['value'])->toBe(2)
         ->and($summary['published_story_points']['value'])->toBe(8.0)
         ->and($summary['development_cycle_time_hours']['p50'])->toBe(2.0)
@@ -63,6 +67,45 @@ it('summarizes only explainable delivery KPIs from correlated cases', function (
         ->and($summary['blocked_time_hours']['total'])->toBe(1.0);
 
     expect($rejected->exists)->toBeTrue();
+});
+
+it('counts assigned rejected and unfinished tasks for the responsible person', function (): void {
+    $tenant = Tenant::factory()->create();
+    $person = Person::factory()->create(['tenant_id' => $tenant->id]);
+    $rejected = DeliveryCase::factory()->create([
+        'tenant_id' => $tenant->id,
+        'task_ref' => 'DRIE-24004',
+        'current_stage' => DeliveryStage::Rejected,
+        'canceled_at' => '2026-09-14 10:00:00',
+        'last_activity_at' => '2026-09-14 10:00:00',
+    ]);
+    $inProgress = DeliveryCase::factory()->create([
+        'tenant_id' => $tenant->id,
+        'task_ref' => 'DRIE-24005',
+        'current_stage' => DeliveryStage::InProgress,
+        'last_activity_at' => '2026-09-14 11:00:00',
+    ]);
+
+    foreach ([$rejected, $inProgress] as $case) {
+        DeliveryCaseParticipant::factory()->forDeliveryCase($case)->create([
+            'person_id' => $person->id,
+            'role' => DeliveryParticipantRole::Implementer,
+            'confidence' => DeliveryAssociationConfidence::High,
+        ]);
+    }
+    kpiMilestone($rejected, DeliveryMilestoneType::Rejected, '2026-09-14 10:00:00');
+
+    $summary = app(DeliveryKpiSummaryService::class)->summarize($tenant->id, [
+        'person_id' => $person->id,
+        'period_start' => '2026-09-14',
+        'period_end' => '2026-09-14',
+    ]);
+
+    expect($summary['assigned_task_count']['value'])->toBe(2)
+        ->and($summary['published_delivery_count']['value'])->toBe(0)
+        ->and($summary['not_published_task_count']['value'])->toBe(2)
+        ->and($summary['rejected_task_count']['value'])->toBe(1)
+        ->and($summary['blocked_task_count']['value'])->toBe(0);
 });
 
 it('filters people by confidence without inflating team throughput', function (): void {

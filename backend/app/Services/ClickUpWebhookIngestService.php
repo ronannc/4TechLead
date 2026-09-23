@@ -674,7 +674,23 @@ final class ClickUpWebhookIngestService
             return [];
         }
 
+        $typedUsers = array_filter(
+            $users,
+            static fn (mixed $user): bool => is_array($user)
+                && is_string(Arr::get($user, 'type'))
+                && Arr::get($user, 'type') !== '',
+        );
+
+        if ($typedUsers !== []) {
+            $users = array_values(array_filter(
+                $users,
+                static fn (mixed $user): bool => is_array($user)
+                    && Arr::get($user, 'type') === 'assigned',
+            ));
+        }
+
         $assignees = [];
+        $seenIds = [];
 
         foreach ($users as $user) {
             if (! is_array($user)) {
@@ -687,9 +703,17 @@ final class ClickUpWebhookIngestService
                 continue;
             }
 
+            $normalizedId = (string) $id;
+
+            if (array_key_exists($normalizedId, $seenIds)) {
+                continue;
+            }
+
+            $seenIds[$normalizedId] = true;
+
             $assignee = [
                 'external_code' => 'clickup_user:'.$id,
-                'id' => (string) $id,
+                'id' => $normalizedId,
             ];
             $name = Arr::get($user, 'username', Arr::get($user, 'name'));
 

@@ -236,6 +236,10 @@ class DeliveryKpiSummary {
   int get associatedCases => _intAt(['coverage', 'associated_cases']);
   num? get associationRate => _numberAt(['coverage', 'association_rate_pct']);
   int get publishedDeliveries => _intAt(['published_delivery_count', 'value']);
+  int get assignedTasks => _intAt(['assigned_task_count', 'value']);
+  int get notPublishedTasks => _intAt(['not_published_task_count', 'value']);
+  int get rejectedTasks => _intAt(['rejected_task_count', 'value']);
+  int get blockedTasks => _intAt(['blocked_task_count', 'value']);
   num get publishedStoryPoints =>
       _numberAt(['published_story_points', 'value']) ?? 0;
   num? get developmentCycleP50 =>

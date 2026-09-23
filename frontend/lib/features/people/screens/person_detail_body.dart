@@ -1480,9 +1480,33 @@ class _CanonicalDeliveryKpis extends StatelessWidget {
               children: [
                 _kpiCard(
                   itemWidth,
+                  Icons.assignment_ind_outlined,
+                  'Tarefas atribuídas',
+                  '${summary.assignedTasks}',
+                ),
+                _kpiCard(
+                  itemWidth,
                   Icons.task_alt_outlined,
                   'Entregas publicadas',
                   '${summary.publishedDeliveries}',
+                ),
+                _kpiCard(
+                  itemWidth,
+                  Icons.pending_actions_outlined,
+                  'Ainda não publicadas',
+                  '${summary.notPublishedTasks}',
+                ),
+                _kpiCard(
+                  itemWidth,
+                  Icons.cancel_outlined,
+                  'Tarefas rejeitadas',
+                  '${summary.rejectedTasks}',
+                ),
+                _kpiCard(
+                  itemWidth,
+                  Icons.block_outlined,
+                  'Tarefas impedidas',
+                  '${summary.blockedTasks}',
                 ),
                 _kpiCard(
                   itemWidth,
