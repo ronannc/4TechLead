@@ -483,9 +483,12 @@ DeliveryKpiSummary _deliveryKpis() {
     'definition_version': 'delivery-kpis.v1',
     'coverage': {
       'cases_in_scope': 3,
+      'eligible_cases': 3,
       'associated_cases': 3,
       'association_rate_pct': 100,
     },
+    'filters': {'person_id': 1},
+    'assigned_task_count': {'value': 3},
     'published_delivery_count': {'value': 2},
     'published_story_points': {'value': 5},
     'development_cycle_time_hours': {'p50': 3},

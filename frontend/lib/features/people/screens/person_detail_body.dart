@@ -1460,8 +1460,10 @@ class _CanonicalDeliveryKpis extends StatelessWidget {
         const SizedBox(height: AppSpacing.sm),
         _Surface(
           child: Text(
-            '${summary.associatedCases} de ${summary.casesInScope} entregas associadas'
-            '${summary.associationRate == null ? '' : ' · ${_percentageMetric(summary.associationRate)} de cobertura'}',
+            summary.isPersonScoped
+                ? '${summary.assignedTasks} tarefas atribuídas no período · ${summary.publishedDeliveries} publicadas'
+                : '${summary.associatedCases} de ${summary.eligibleCases} entregas do período associadas'
+                      '${summary.associationRate == null ? '' : ' · ${_percentageMetric(summary.associationRate)} de cobertura'}',
             style: theme.textTheme.bodySmall?.copyWith(
               color: theme.colorScheme.onSurfaceVariant,
             ),

@@ -232,7 +232,14 @@ class DeliveryKpiSummary {
 
   String get definitionVersion => _data['definition_version'] as String;
 
+  bool get isPersonScoped {
+    final filters = _data['filters'];
+
+    return filters is Map<String, dynamic> && filters['person_id'] != null;
+  }
+
   int get casesInScope => _intAt(['coverage', 'cases_in_scope']);
+  int get eligibleCases => _intAt(['coverage', 'eligible_cases']);
   int get associatedCases => _intAt(['coverage', 'associated_cases']);
   num? get associationRate => _numberAt(['coverage', 'association_rate_pct']);
   int get publishedDeliveries => _intAt(['published_delivery_count', 'value']);
