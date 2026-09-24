@@ -28,7 +28,7 @@ class OneOnOneGetHistory extends Tool
             'limit' => ['sometimes', 'integer', 'min:1', 'max:50'],
         ]);
 
-        $user = $request->user('sanctum');
+        $user = $request->user();
 
         if (! $user instanceof User) {
             return Response::error('Authentication is required to access 4TechLead data.');

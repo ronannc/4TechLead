@@ -18,10 +18,14 @@ class AuthenticateMcp
     public function handle(Request $request, Closure $next): Response
     {
         if (auth('sanctum')->check()) {
+            $request->setUserResolver(fn () => auth('sanctum')->user());
+
             return $next($request);
         }
 
         if ($this->passportIsConfigured() && auth('api')->check()) {
+            $request->setUserResolver(fn () => auth('api')->user());
+
             return $next($request);
         }
 

@@ -27,7 +27,7 @@ class PeopleGetContext extends Tool
             'person_id' => ['required', 'integer', 'min:1'],
         ]);
 
-        $user = $request->user('sanctum');
+        $user = $request->user();
 
         if (! $user instanceof User) {
             return Response::error('Authentication is required to access 4TechLead data.');
