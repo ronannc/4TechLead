@@ -73,7 +73,22 @@ it('rejects an unauthenticated MCP tool call', function () {
 });
 
 it('protects the remote MCP endpoint with Sanctum', function () {
-    $this->postJson('/mcp/4techlead', [])->assertUnauthorized();
+    $this->postJson('/mcp/4techlead', [])
+        ->assertUnauthorized()
+        ->assertHeader('WWW-Authenticate', 'Bearer realm="mcp", resource_metadata="'.url('/.well-known/oauth-protected-resource/mcp/4techlead').'", scope="mcp:use"');
+});
+
+it('publishes OAuth metadata for the remote MCP endpoint', function () {
+    $this->getJson('/.well-known/oauth-protected-resource/mcp/4techlead')
+        ->assertOk()
+        ->assertJsonPath('resource', url('/mcp/4techlead'))
+        ->assertJsonPath('scopes_supported.0', 'mcp:use');
+
+    $this->getJson('/.well-known/oauth-authorization-server/mcp/4techlead')
+        ->assertOk()
+        ->assertJsonPath('authorization_endpoint', url('/oauth/authorize'))
+        ->assertJsonPath('token_endpoint', url('/oauth/token'))
+        ->assertJsonPath('scopes_supported.0', 'mcp:use');
 });
 
 it('completes the MCP initialize handshake for an authenticated client', function () {
