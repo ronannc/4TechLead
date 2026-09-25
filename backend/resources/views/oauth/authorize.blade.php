@@ -21,7 +21,7 @@
         </ul>
     @endif
 
-    <form method="POST" action="{{ route('passport.authorizations.approve') }}">
+    <form method="POST" action="{{ route('mcp.oauth.authorize.approve') }}">
         @csrf
         <input type="hidden" name="auth_token" value="{{ $authToken }}">
         <button type="submit">Autorizar</button>
