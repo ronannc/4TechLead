@@ -8,6 +8,7 @@ use App\Models\OneOnOneSession;
 use App\Models\Person;
 use App\Models\User;
 use App\Services\Agent\AgentContextService;
+use Laravel\Passport\Contracts\AuthorizationViewResponse;
 
 it('exposes the first read-only tools with structured responses', function () {
     $user = User::factory()->create();
@@ -89,6 +90,14 @@ it('publishes OAuth metadata for the remote MCP endpoint', function () {
         ->assertJsonPath('authorization_endpoint', url('/oauth/authorize'))
         ->assertJsonPath('token_endpoint', url('/oauth/token'))
         ->assertJsonPath('scopes_supported.0', 'mcp:use');
+});
+
+it('registers the Passport authorization view and web login entrypoint', function () {
+    $this->get('/login')
+        ->assertOk()
+        ->assertSee('Entrar no 4TechLead');
+
+    expect(app(AuthorizationViewResponse::class))->toBeInstanceOf(AuthorizationViewResponse::class);
 });
 
 it('completes the MCP initialize handshake for an authenticated client', function () {

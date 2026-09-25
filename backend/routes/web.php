@@ -1,6 +1,10 @@
 <?php
 
+use App\Http\Controllers\Web\OAuthLoginController;
 use Illuminate\Support\Facades\Route;
+
+Route::get('/login', [OAuthLoginController::class, 'create'])->name('login');
+Route::post('/login', [OAuthLoginController::class, 'store'])->name('login.store');
 
 Route::get('/', function () {
     return view('welcome');
