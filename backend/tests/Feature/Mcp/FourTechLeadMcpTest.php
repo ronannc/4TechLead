@@ -137,7 +137,7 @@ it('completes the Passport MCP authorization flow with the real consent screen',
     $authorization->assertSee('Autorizar acesso ao Codex');
     $authToken = $authorization->viewData('authToken');
 
-    $approval = $this->post('/oauth/authorize', [
+    $approval = $this->post('/oauth/mcp/authorize', [
         '_token' => csrf_token(),
         'auth_token' => $authToken,
     ])->assertRedirect();
@@ -156,6 +156,49 @@ it('completes the Passport MCP authorization flow with the real consent screen',
         'code_verifier' => $verifier,
     ])->assertOk()
         ->assertJsonStructure(['token_type', 'expires_in', 'access_token']);
+});
+
+it('keeps concurrent MCP authorizations valid for the same signed-in user', function () {
+    $key = openssl_pkey_new([
+        'private_key_bits' => 2048,
+        'private_key_type' => OPENSSL_KEYTYPE_RSA,
+    ]);
+    openssl_pkey_export($key, $privateKey);
+    $publicKey = openssl_pkey_get_details($key)['key'];
+    config([
+        'passport.private_key' => $privateKey,
+        'passport.public_key' => $publicKey,
+    ]);
+
+    $user = User::factory()->create();
+    $client = app(ClientRepository::class)->createAuthorizationCodeGrantClient(
+        'Codex',
+        ['https://client.example/callback'],
+        confidential: false,
+    );
+    $query = http_build_query([
+        'client_id' => $client->getKey(),
+        'redirect_uri' => 'https://client.example/callback',
+        'response_type' => 'code',
+        'scope' => 'mcp:use',
+        'state' => 'first-request',
+        'code_challenge' => 'iyjvC_1uGXib37nE6TMkVFLrjFwsDE-NKfQx2mJHPPY',
+        'code_challenge_method' => 'S256',
+    ]);
+
+    $firstAuthorization = $this->actingAs($user, 'web')
+        ->get('/oauth/authorize?'.$query)
+        ->assertOk();
+    $firstToken = $firstAuthorization->viewData('authToken');
+
+    $this->get('/oauth/authorize?'.$query)
+        ->assertOk();
+
+    $this->post('/oauth/mcp/authorize', [
+        '_token' => csrf_token(),
+        'auth_token' => $firstToken,
+    ])->assertRedirect()
+        ->assertRedirectContains('state=first-request');
 });
 
 it('completes the MCP initialize handshake for an authenticated client', function () {

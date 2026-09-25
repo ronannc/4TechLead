@@ -2,8 +2,9 @@
 
 namespace App\Providers;
 
+use App\Mcp\Http\McpAuthorizationViewResponse;
 use Illuminate\Support\ServiceProvider;
-use Laravel\Passport\Passport;
+use Laravel\Passport\Contracts\AuthorizationViewResponse;
 
 class AppServiceProvider extends ServiceProvider
 {
@@ -12,7 +13,7 @@ class AppServiceProvider extends ServiceProvider
      */
     public function register(): void
     {
-        //
+        $this->app->singleton(AuthorizationViewResponse::class, McpAuthorizationViewResponse::class);
     }
 
     /**
@@ -20,6 +21,6 @@ class AppServiceProvider extends ServiceProvider
      */
     public function boot(): void
     {
-        Passport::authorizationView('mcp.authorize');
+        //
     }
 }

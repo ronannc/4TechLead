@@ -66,7 +66,7 @@
                 <input type="hidden" name="auth_token" value="{{ $authToken }}">
                 <button class="deny" type="submit">Cancelar</button>
             </form>
-            <form method="POST" action="{{ route('passport.authorizations.approve') }}">
+            <form method="POST" action="{{ route('mcp.oauth.authorize.approve') }}">
                 @csrf
                 <input type="hidden" name="state" value="">
                 <input type="hidden" name="client_id" value="{{ $client->id }}">
