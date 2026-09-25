@@ -97,12 +97,10 @@ it('registers the MCP authorization view and web login entrypoint', function () 
         ->assertOk()
         ->assertSee('Entrar no 4TechLead');
 
-    expect(view()->exists('mcp::authorize'))->toBeTrue();
+    expect(view()->exists('mcp.authorize'))->toBeTrue();
 });
 
 it('completes the Passport MCP authorization flow with the real consent screen', function () {
-    $this->withoutVite();
-
     $key = openssl_pkey_new([
         'private_key_bits' => 2048,
         'private_key_type' => OPENSSL_KEYTYPE_RSA,
@@ -136,7 +134,7 @@ it('completes the Passport MCP authorization flow with the real consent screen',
         ->get('/oauth/authorize?'.$query)
         ->assertOk();
 
-    $authorization->assertSee('Authorize Codex');
+    $authorization->assertSee('Autorizar acesso ao Codex');
     $authToken = $authorization->viewData('authToken');
 
     $approval = $this->post('/oauth/authorize', [
