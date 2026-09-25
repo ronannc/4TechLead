@@ -100,6 +100,17 @@ it('registers the Passport authorization view and web login entrypoint', functio
     expect(app(AuthorizationViewResponse::class))->toBeInstanceOf(AuthorizationViewResponse::class);
 });
 
+it('renders the OAuth authorization view with Passport scope arrays', function () {
+    $response = $this->view('oauth.authorize', [
+        'client' => (object) ['name' => 'Codex'],
+        'scopes' => [['id' => 'mcp:use', 'description' => 'Usar o MCP']],
+        'authToken' => 'test-token',
+    ]);
+
+    $response->assertSee('Codex')
+        ->assertSee('Usar o MCP');
+});
+
 it('completes the MCP initialize handshake for an authenticated client', function () {
     $user = User::factory()->create();
 

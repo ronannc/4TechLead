@@ -12,11 +12,11 @@
         {{ $client->name }} está solicitando acesso à sua conta para conectar o Codex ao 4TechLead.
     </p>
 
-    @if ($scopes->isNotEmpty())
+    @if (count($scopes) > 0)
         <h2>Permissões solicitadas</h2>
         <ul>
             @foreach ($scopes as $scope)
-                <li>{{ $scope->description ?: $scope->id }}</li>
+                <li>{{ data_get($scope, 'description') ?: data_get($scope, 'id') }}</li>
             @endforeach
         </ul>
     @endif
