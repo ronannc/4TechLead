@@ -8,7 +8,7 @@ use Laravel\Mcp\Facades\Mcp;
 
 Mcp::oauthRoutes();
 
-Route::post('mcp/oauth/authorize', McpApproveAuthorizationController::class)
+Route::post('oauth/mcp/authorize', McpApproveAuthorizationController::class)
     ->middleware(['web', 'auth:web'])
     ->name('mcp.oauth.authorize.approve');
 

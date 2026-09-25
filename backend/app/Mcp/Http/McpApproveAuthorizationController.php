@@ -15,7 +15,12 @@ class McpApproveAuthorizationController
         ApproveAuthorizationController $passportController,
     ): Response {
         $authToken = $request->string('auth_token')->toString();
-        $authRequest = $request->session()->get('mcp.oauth.authorizations.'.$authToken);
+        $authorizations = $request->session()->get('mcp.oauth.authorizations', []);
+        $authRequest = is_array($authorizations) ? ($authorizations[$authToken] ?? null) : null;
+
+        if (! is_string($authRequest) && $request->session()->get('authToken') === $authToken) {
+            $authRequest = $request->session()->get('authRequest');
+        }
 
         abort_unless(is_string($authRequest) && $authToken !== '', Response::HTTP_FORBIDDEN);
 
@@ -25,7 +30,12 @@ class McpApproveAuthorizationController
         try {
             return $passportController->approve($request, $psrResponse);
         } finally {
-            $request->session()->forget('mcp.oauth.authorizations.'.$authToken);
+            $authorizations = $request->session()->get('mcp.oauth.authorizations', []);
+
+            if (is_array($authorizations)) {
+                unset($authorizations[$authToken]);
+                $request->session()->put('mcp.oauth.authorizations', $authorizations);
+            }
         }
     }
 }

@@ -26,10 +26,9 @@ class McpAuthorizationViewResponse implements AuthorizationViewResponse
         $authRequest = $this->request->session()->get('authRequest');
 
         if (is_string($authToken) && is_string($authRequest)) {
-            $this->request->session()->put(
-                'mcp.oauth.authorizations.'.$authToken,
-                $authRequest,
-            );
+            $authorizations = $this->request->session()->get('mcp.oauth.authorizations', []);
+            $authorizations[$authToken] = $authRequest;
+            $this->request->session()->put('mcp.oauth.authorizations', $authorizations);
         }
 
         return $this;
