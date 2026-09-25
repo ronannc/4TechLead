@@ -8,7 +8,7 @@ use App\Models\OneOnOneSession;
 use App\Models\Person;
 use App\Models\User;
 use App\Services\Agent\AgentContextService;
-use Laravel\Passport\Contracts\AuthorizationViewResponse;
+use Laravel\Passport\ClientRepository;
 
 it('exposes the first read-only tools with structured responses', function () {
     $user = User::factory()->create();
@@ -92,23 +92,72 @@ it('publishes OAuth metadata for the remote MCP endpoint', function () {
         ->assertJsonPath('scopes_supported.0', 'mcp:use');
 });
 
-it('registers the Passport authorization view and web login entrypoint', function () {
+it('registers the MCP authorization view and web login entrypoint', function () {
     $this->get('/login')
         ->assertOk()
         ->assertSee('Entrar no 4TechLead');
 
-    expect(app(AuthorizationViewResponse::class))->toBeInstanceOf(AuthorizationViewResponse::class);
+    expect(view()->exists('mcp::authorize'))->toBeTrue();
 });
 
-it('renders the OAuth authorization view with Passport scope arrays', function () {
-    $response = $this->view('oauth.authorize', [
-        'client' => (object) ['name' => 'Codex'],
-        'scopes' => [['id' => 'mcp:use', 'description' => 'Usar o MCP']],
-        'authToken' => 'test-token',
+it('completes the Passport MCP authorization flow with the real consent screen', function () {
+    $this->withoutVite();
+
+    $key = openssl_pkey_new([
+        'private_key_bits' => 2048,
+        'private_key_type' => OPENSSL_KEYTYPE_RSA,
+    ]);
+    openssl_pkey_export($key, $privateKey);
+    $publicKey = openssl_pkey_get_details($key)['key'];
+    config([
+        'passport.private_key' => $privateKey,
+        'passport.public_key' => $publicKey,
     ]);
 
-    $response->assertSee('Codex')
-        ->assertSee('Usar o MCP');
+    $user = User::factory()->create();
+    $client = app(ClientRepository::class)->createAuthorizationCodeGrantClient(
+        'Codex',
+        ['https://client.example/callback'],
+        confidential: false,
+    );
+    $verifier = 'verifier-that-is-long-enough-for-pkce-1234567890';
+    $challenge = rtrim(strtr(base64_encode(hash('sha256', $verifier, true)), '+/', '-_'), '=');
+    $query = http_build_query([
+        'client_id' => $client->getKey(),
+        'redirect_uri' => 'https://client.example/callback',
+        'response_type' => 'code',
+        'scope' => 'mcp:use',
+        'state' => 'test-state',
+        'code_challenge' => $challenge,
+        'code_challenge_method' => 'S256',
+    ]);
+
+    $authorization = $this->actingAs($user, 'web')
+        ->get('/oauth/authorize?'.$query)
+        ->assertOk();
+
+    $authorization->assertSee('Authorize Codex');
+    $authToken = $authorization->viewData('authToken');
+
+    $approval = $this->post('/oauth/authorize', [
+        '_token' => csrf_token(),
+        'auth_token' => $authToken,
+    ])->assertRedirect();
+
+    parse_str((string) parse_url((string) $approval->headers->get('Location'), PHP_URL_QUERY), $redirectQuery);
+
+    expect($redirectQuery)
+        ->toHaveKey('code')
+        ->toHaveKey('state', 'test-state');
+
+    $this->postJson('/oauth/token', [
+        'grant_type' => 'authorization_code',
+        'client_id' => $client->getKey(),
+        'redirect_uri' => 'https://client.example/callback',
+        'code' => $redirectQuery['code'],
+        'code_verifier' => $verifier,
+    ])->assertOk()
+        ->assertJsonStructure(['token_type', 'expires_in', 'access_token']);
 });
 
 it('completes the MCP initialize handshake for an authenticated client', function () {
