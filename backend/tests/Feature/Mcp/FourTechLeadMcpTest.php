@@ -268,3 +268,22 @@ it('completes the MCP initialize handshake for an authenticated client', functio
         ->assertJsonPath('result.serverInfo.name', 'Four Tech Lead Server')
         ->assertJsonPath('result.instructions', 'Read-only access to authorized 4TechLead leadership context, 1:1 history and development plans.');
 });
+
+it('propagates the authenticated HTTP guard to MCP tool calls', function () {
+    $user = User::factory()->create();
+    $person = Person::factory()->create(['name' => 'Lucas Farias']);
+
+    $this->actingAs($user, 'sanctum')
+        ->postJson('/mcp/4techlead', [
+            'jsonrpc' => '2.0',
+            'id' => 1,
+            'method' => 'tools/call',
+            'params' => [
+                'name' => 'people.search',
+                'arguments' => ['query' => 'Lucas'],
+            ],
+        ])
+        ->assertOk()
+        ->assertJsonPath('result.structuredContent.data.people.0.id', $person->id)
+        ->assertJsonPath('result.structuredContent.data.people.0.name', 'Lucas Farias');
+});

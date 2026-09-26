@@ -5,6 +5,7 @@ namespace App\Http\Middleware;
 use Closure;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Laravel\Passport\Passport;
 use Symfony\Component\HttpFoundation\Response;
 
 class AuthenticateMcp
@@ -18,12 +19,14 @@ class AuthenticateMcp
     public function handle(Request $request, Closure $next): Response
     {
         if (auth('sanctum')->check()) {
+            auth()->shouldUse('sanctum');
             $request->setUserResolver(fn () => auth('sanctum')->user());
 
             return $next($request);
         }
 
         if ($this->passportIsConfigured() && auth('api')->check()) {
+            auth()->shouldUse('api');
             $request->setUserResolver(fn () => auth('api')->user());
 
             return $next($request);
@@ -34,7 +37,14 @@ class AuthenticateMcp
 
     private function passportIsConfigured(): bool
     {
-        return filled(config('passport.public_key')) && filled(config('passport.private_key'));
+        return $this->passportKeyIsConfigured('public')
+            && $this->passportKeyIsConfigured('private');
+    }
+
+    private function passportKeyIsConfigured(string $type): bool
+    {
+        return filled(config("passport.{$type}_key"))
+            || is_file(Passport::keyPath("oauth-{$type}.key"));
     }
 
     private function unauthorizedResponse(Request $request): JsonResponse

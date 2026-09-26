@@ -4,12 +4,7 @@
     <option name="autoReloadType" value="NONE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="d8e1a0fe-cfa2-4c51-88d0-edc9f875d443" name="Changes" comment="feat(kpis): add task counts for assigned, not published, rejected, and blocked tasks">
-      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/frontend/lib/features/people/models/person_growth_models.dart" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/lib/features/people/models/person_growth_models.dart" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/frontend/lib/features/people/screens/person_detail_body.dart" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/lib/features/people/screens/person_detail_body.dart" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/frontend/test/features/people/screens/person_detail_body_layout_test.dart" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/test/features/people/screens/person_detail_body_layout_test.dart" afterDir="false" />
-    </list>
+    <list default="true" id="d8e1a0fe-cfa2-4c51-88d0-edc9f875d443" name="Changes" comment="fix(workspace): update task summary and message for KPI tracking" />
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
     <option name="HIGHLIGHT_NON_ACTIVE_CHANGELIST" value="false" />
@@ -268,7 +263,7 @@
       <workItem from="1790132369281" duration="315000" />
       <workItem from="1790132779889" duration="203000" />
       <workItem from="1790133001375" duration="98000" />
-      <workItem from="1790133788780" duration="26000" />
+      <workItem from="1790133788780" duration="119000" />
     </task>
     <task id="LOCAL-00001" summary="feat(kpis): add task counts for assigned, not published, rejected, and blocked tasks">
       <option name="closed" value="true" />
@@ -278,7 +273,15 @@
       <option name="project" value="LOCAL" />
       <updated>1790133090509</updated>
     </task>
-    <option name="localTasksCounter" value="2" />
+    <task id="LOCAL-00002" summary="fix(workspace): update task summary and message for KPI tracking">
+      <option name="closed" value="true" />
+      <created>1790133826613</created>
+      <option name="number" value="00002" />
+      <option name="presentableId" value="LOCAL-00002" />
+      <option name="project" value="LOCAL" />
+      <updated>1790133826613</updated>
+    </task>
+    <option name="localTasksCounter" value="3" />
     <servers />
   </component>
   <component name="TypeScriptGeneratedFilesManager">
@@ -290,7 +293,8 @@
       <path value="$PROJECT_DIR$/frontend" />
     </ignored-roots>
     <MESSAGE value="feat(kpis): add task counts for assigned, not published, rejected, and blocked tasks" />
-    <option name="LAST_COMMIT_MESSAGE" value="feat(kpis): add task counts for assigned, not published, rejected, and blocked tasks" />
+    <MESSAGE value="fix(workspace): update task summary and message for KPI tracking" />
+    <option name="LAST_COMMIT_MESSAGE" value="fix(workspace): update task summary and message for KPI tracking" />
   </component>
   <component name="XSLT-Support.FileAssociations.UIState">
     <expand />
