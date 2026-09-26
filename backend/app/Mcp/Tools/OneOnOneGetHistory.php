@@ -2,6 +2,7 @@
 
 namespace App\Mcp\Tools;
 
+use App\Mcp\McpAuthenticationResponse;
 use App\Models\User;
 use App\Services\Agent\AgentContextService;
 use Illuminate\Contracts\JsonSchema\JsonSchema;
@@ -31,7 +32,7 @@ class OneOnOneGetHistory extends Tool
         $user = $request->user();
 
         if (! $user instanceof User) {
-            return Response::error('Authentication is required to access 4TechLead data.');
+            return McpAuthenticationResponse::required();
         }
 
         return Response::structured([

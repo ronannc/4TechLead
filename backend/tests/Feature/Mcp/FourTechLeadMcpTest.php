@@ -1,6 +1,7 @@
 <?php
 
 use App\Enums\UserRole;
+use App\Mcp\McpAuthenticationResponse;
 use App\Mcp\Servers\FourTechLeadServer;
 use App\Mcp\Tools\OneOnOneGetHistory;
 use App\Mcp\Tools\PeopleGetContext;
@@ -108,6 +109,14 @@ it('does not allow a member to read another person through MCP', function () {
 it('rejects an unauthenticated MCP tool call', function () {
     FourTechLeadServer::tool(PeopleGetContext::class, ['person_id' => 1])
         ->assertHasErrors(['Authentication is required']);
+});
+
+it('advertises OAuth reauthentication for unauthenticated MCP tool calls', function () {
+    expect(McpAuthenticationResponse::required()->getMeta())
+        ->toHaveKey('mcp/www_authenticate.0')
+        ->and(McpAuthenticationResponse::required()->getMeta()['mcp/www_authenticate'][0])
+        ->toContain('resource_metadata="'.url('/.well-known/oauth-protected-resource/mcp/4techlead').'"')
+        ->toContain('scope="mcp:use"');
 });
 
 it('protects the remote MCP endpoint with Sanctum', function () {
