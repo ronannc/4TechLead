@@ -4,6 +4,7 @@ namespace App\Mcp\Servers;
 
 use App\Mcp\Tools\OneOnOneGetHistory;
 use App\Mcp\Tools\PeopleGetContext;
+use App\Mcp\Tools\PeopleSearch;
 use Laravel\Mcp\Server;
 use Laravel\Mcp\Server\Attributes\Instructions;
 use Laravel\Mcp\Server\Attributes\Name;
@@ -15,6 +16,7 @@ use Laravel\Mcp\Server\Attributes\Version;
 class FourTechLeadServer extends Server
 {
     protected array $tools = [
+        PeopleSearch::class,
         PeopleGetContext::class,
         OneOnOneGetHistory::class,
     ];

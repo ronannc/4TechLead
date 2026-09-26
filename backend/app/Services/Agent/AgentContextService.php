@@ -11,6 +11,32 @@ use Illuminate\Support\Facades\Gate;
 
 final class AgentContextService
 {
+    /**
+     * @return array{query: string, people: array<int, array<string, mixed>>}
+     */
+    public function searchPeople(User $user, string $query, int $limit = 10): array
+    {
+        $query = trim($query);
+        $limit = min(max($limit, 1), 50);
+
+        $people = Person::query()
+            ->with('team')
+            ->when($user->tenant_id !== null, fn (Builder $builder): Builder => $builder->where('tenant_id', $user->tenant_id))
+            ->when(
+                $user->isMember(),
+                fn (Builder $builder): Builder => $builder->whereKey($user->person_id),
+            )
+            ->where('name', 'like', "%{$query}%")
+            ->orderBy('name')
+            ->limit($limit)
+            ->get();
+
+        return [
+            'query' => $query,
+            'people' => $people->map(fn (Person $person): array => $this->personData($person))->values()->all(),
+        ];
+    }
+
     public function getPersonContext(User $user, int $personId): array
     {
         $person = $this->findAuthorizedPerson($user, $personId);

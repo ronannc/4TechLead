@@ -4,6 +4,7 @@ use App\Enums\UserRole;
 use App\Mcp\Servers\FourTechLeadServer;
 use App\Mcp\Tools\OneOnOneGetHistory;
 use App\Mcp\Tools\PeopleGetContext;
+use App\Mcp\Tools\PeopleSearch;
 use App\Models\OneOnOneSession;
 use App\Models\Person;
 use App\Models\User;
@@ -43,8 +44,13 @@ it('exposes the first read-only tools with structured responses', function () {
 });
 
 it('publishes stable domain tool names and read-only annotations', function () {
+    $searchTool = new PeopleSearch(app(AgentContextService::class));
     $peopleTool = new PeopleGetContext(app(AgentContextService::class));
     $historyTool = new OneOnOneGetHistory(app(AgentContextService::class));
+
+    expect($searchTool->toArray())
+        ->name->toBe('people.search')
+        ->annotations->toHaveKey('readOnlyHint', true);
 
     expect($peopleTool->toArray())
         ->name->toBe('people.get_context')
@@ -53,6 +59,37 @@ it('publishes stable domain tool names and read-only annotations', function () {
     expect($historyTool->toArray())
         ->name->toBe('one_on_one.get_history')
         ->annotations->toHaveKey('readOnlyHint', true);
+});
+
+it('searches authorized people by partial name through MCP', function () {
+    $user = User::factory()->create();
+    $person = Person::factory()->create(['name' => 'Lucas Farias']);
+    Person::factory()->create(['name' => 'Mariana Souza']);
+
+    FourTechLeadServer::actingAs($user, 'sanctum')
+        ->tool(PeopleSearch::class, ['query' => 'lucas'])
+        ->assertOk()
+        ->assertStructuredContent(fn ($json) => $json
+            ->where('data.query', 'lucas')
+            ->has('data.people', 1)
+            ->where('data.people.0.id', $person->id)
+            ->where('data.people.0.name', 'Lucas Farias')
+            ->etc());
+});
+
+it('limits a member MCP person search to their linked person', function () {
+    $ownedPerson = Person::factory()->create(['name' => 'Lucas Farias']);
+    Person::factory()->create(['name' => 'Lucas Martins']);
+    $member = User::factory()->member()->create(['person_id' => $ownedPerson->id]);
+
+    FourTechLeadServer::actingAs($member, 'sanctum')
+        ->tool(PeopleSearch::class, ['query' => 'Lucas'])
+        ->assertOk()
+        ->assertStructuredContent(fn ($json) => $json
+            ->has('data.people', 1)
+            ->where('data.people.0.id', $ownedPerson->id)
+            ->where('data.people.0.name', 'Lucas Farias')
+            ->etc());
 });
 
 it('does not allow a member to read another person through MCP', function () {
