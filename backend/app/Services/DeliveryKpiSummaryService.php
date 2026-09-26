@@ -304,6 +304,119 @@ final class DeliveryKpiSummaryService
     }
 
     /**
+     * @param  array<string, mixed>  $filters
+     * @return array<string, mixed>
+     */
+    public function evidence(int $tenantId, array $filters = [], int $limit = 50): array
+    {
+        if ($tenantId <= 0) {
+            throw new InvalidArgumentException('A valid tenant id is required.');
+        }
+
+        $minimumConfidence = $this->minimumConfidence($filters['minimum_confidence'] ?? null);
+        $includedConfidenceValues = $this->includedConfidenceValues($minimumConfidence);
+        $periodStart = $this->filterDate($filters['period_start'] ?? null, false);
+        $periodEnd = $this->filterDate($filters['period_end'] ?? null, true);
+
+        if ($periodStart !== null && $periodEnd !== null && $periodEnd->lt($periodStart)) {
+            throw new InvalidArgumentException('The period end must not be before the period start.');
+        }
+
+        $scopeQuery = DeliveryCase::query()
+            ->withoutGlobalScopes()
+            ->where('tenant_id', $tenantId);
+
+        $this->applyCohortFilters($scopeQuery, $filters, $periodStart, $periodEnd);
+
+        $query = (clone $scopeQuery)
+            ->whereNull('canceled_at')
+            ->where(function (Builder $query): void {
+                $query
+                    ->whereNull('current_stage')
+                    ->orWhere('current_stage', '!=', DeliveryStage::Rejected->value);
+            });
+
+        $this->applyParticipantFilter(
+            $query,
+            $tenantId,
+            $includedConfidenceValues,
+            $filters['person_id'] ?? null,
+        );
+
+        $cases = $query
+            ->with([
+                'participants' => function ($query) use ($tenantId, $includedConfidenceValues, $filters): void {
+                    $query
+                        ->withoutGlobalScopes()
+                        ->where('tenant_id', $tenantId)
+                        ->whereIn('role', $this->developerRoleValues())
+                        ->whereIn('confidence', $includedConfidenceValues);
+
+                    if (isset($filters['person_id'])) {
+                        $query->where('person_id', (int) $filters['person_id']);
+                    }
+                },
+                'milestones' => fn ($query) => $query
+                    ->withoutGlobalScopes()
+                    ->where('tenant_id', $tenantId)
+                    ->oldest('occurred_at')
+                    ->oldest('id'),
+                'externalLinks' => fn ($query) => $query
+                    ->withoutGlobalScopes()
+                    ->where('tenant_id', $tenantId)
+                    ->oldest('id'),
+            ])
+            ->orderByDesc('completed_at')
+            ->orderByDesc('last_activity_at')
+            ->limit(min(max($limit, 1), 100))
+            ->get();
+
+        return [
+            'definition_version' => self::DEFINITION_VERSION,
+            'filters' => [
+                'tenant_id' => $tenantId,
+                'person_id' => isset($filters['person_id']) ? (int) $filters['person_id'] : null,
+                'period_start' => $periodStart?->toIso8601String(),
+                'period_end' => $periodEnd?->toIso8601String(),
+                'sprint' => $filters['sprint'] ?? null,
+                'minimum_confidence' => $minimumConfidence->value,
+            ],
+            'evidence_count' => $cases->count(),
+            'cases' => $cases->map(fn (DeliveryCase $case): array => [
+                'id' => $case->id,
+                'task_ref' => $case->task_ref,
+                'title' => $case->title,
+                'current_stage' => $case->current_stage?->value,
+                'story_points' => $case->story_points !== null ? (float) $case->story_points : null,
+                'completed_at' => $case->completed_at?->toIso8601String(),
+                'last_activity_at' => $case->last_activity_at?->toIso8601String(),
+                'participants' => $case->participants->map(fn (DeliveryCaseParticipant $participant): array => [
+                    'person_id' => $participant->person_id,
+                    'role' => $participant->role?->value,
+                    'confidence' => $participant->confidence?->value,
+                    'source_provider' => $participant->source_provider,
+                    'source_ref' => $participant->source_ref,
+                    'valid_from' => $participant->valid_from?->toIso8601String(),
+                    'valid_to' => $participant->valid_to?->toIso8601String(),
+                ])->values()->all(),
+                'milestones' => $case->milestones->map(fn (DeliveryCaseMilestone $milestone): array => [
+                    'milestone_type' => $milestone->milestone_type?->value,
+                    'source_provider' => $milestone->source_provider,
+                    'source_ref' => $milestone->source_ref,
+                    'occurred_at' => $milestone->occurred_at?->toIso8601String(),
+                    'metadata' => $milestone->metadata,
+                ])->values()->all(),
+                'external_links' => $case->externalLinks->map(fn ($link): array => [
+                    'link_type' => $link->link_type?->value,
+                    'external_id' => $link->external_id,
+                    'source_ref' => $link->source_ref,
+                    'metadata' => $link->metadata,
+                ])->values()->all(),
+            ])->values()->all(),
+        ];
+    }
+
+    /**
      * @param  Builder<DeliveryCase>  $query
      * @param  array<string, mixed>  $filters
      */

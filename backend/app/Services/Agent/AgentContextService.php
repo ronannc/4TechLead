@@ -2,15 +2,22 @@
 
 namespace App\Services\Agent;
 
+use App\Models\DeliveryCase;
 use App\Models\DevelopmentPlan;
 use App\Models\OneOnOneSession;
 use App\Models\Person;
 use App\Models\User;
+use App\Services\DeliveryKpiSummaryService;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Support\Facades\Gate;
 
 final class AgentContextService
 {
+    public function __construct(
+        private readonly DeliveryKpiSummaryService $kpiSummaryService,
+    ) {}
+
     /**
      * @return array{query: string, people: array<int, array<string, mixed>>}
      */
@@ -82,6 +89,104 @@ final class AgentContextService
             'person_id' => $person->id,
             'sessions' => $sessions->map(fn (OneOnOneSession $session): array => $this->sessionData($session))->values()->all(),
         ];
+    }
+
+    /**
+     * @return array{person_id: int, plans: array<int, array<string, mixed>>}
+     */
+    public function getOpenPdiActions(User $user, int $personId, int $limit = 25): array
+    {
+        $person = $this->findAuthorizedPerson($user, $personId);
+        $limit = min(max($limit, 1), 50);
+
+        $plans = DevelopmentPlan::query()
+            ->where('person_id', $person->id)
+            ->whereNotIn('status', ['completed', 'cancelled'])
+            ->with(['items' => fn (HasMany $query): HasMany => $query
+                ->whereNotIn('status', ['done', 'completed', 'cancelled'])
+                ->orderByRaw('due_date is null')
+                ->orderBy('due_date')
+                ->orderBy('id')
+                ->limit($limit)])
+            ->latest('updated_at')
+            ->get();
+
+        $remaining = $limit;
+        $data = [];
+
+        foreach ($plans as $plan) {
+            if ($remaining === 0) {
+                break;
+            }
+
+            $items = $plan->items->take($remaining);
+            $remaining -= $items->count();
+
+            if ($items->isEmpty()) {
+                continue;
+            }
+
+            $data[] = [
+                'id' => $plan->id,
+                'title' => $plan->title,
+                'status' => $plan->status,
+                'progress' => $plan->progress,
+                'end_date' => $plan->end_date?->toDateString(),
+                'actions' => $items->map(fn ($item): array => [
+                    'id' => $item->id,
+                    'title' => $item->title,
+                    'description' => $item->description,
+                    'competency' => $item->competency,
+                    'evidence' => $item->evidence,
+                    'status' => $item->status,
+                    'due_date' => $item->due_date?->toDateString(),
+                    'progress' => $item->progress,
+                ])->values()->all(),
+            ];
+        }
+
+        return [
+            'person_id' => $person->id,
+            'plans' => $data,
+        ];
+    }
+
+    /**
+     * @param  array<string, mixed>  $filters
+     * @return array<string, mixed>
+     */
+    public function getKpiSummary(User $user, array $filters = []): array
+    {
+        Gate::forUser($user)->authorize('viewAny', DeliveryCase::class);
+
+        $tenantId = $user->tenant_id;
+
+        abort_if($tenantId === null, 403);
+
+        if (isset($filters['person_id'])) {
+            $this->findAuthorizedPerson($user, (int) $filters['person_id']);
+        }
+
+        return $this->kpiSummaryService->summarize($tenantId, $filters);
+    }
+
+    /**
+     * @param  array<string, mixed>  $filters
+     * @return array<string, mixed>
+     */
+    public function getKpiEvidence(User $user, array $filters = [], int $limit = 50): array
+    {
+        Gate::forUser($user)->authorize('viewAny', DeliveryCase::class);
+
+        $tenantId = $user->tenant_id;
+
+        abort_if($tenantId === null, 403);
+
+        if (isset($filters['person_id'])) {
+            $this->findAuthorizedPerson($user, (int) $filters['person_id']);
+        }
+
+        return $this->kpiSummaryService->evidence($tenantId, $filters, $limit);
     }
 
     private function findAuthorizedPerson(User $user, int $personId): Person

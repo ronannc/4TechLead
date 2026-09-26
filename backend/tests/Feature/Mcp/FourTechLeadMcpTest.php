@@ -1,13 +1,27 @@
 <?php
 
+use App\Enums\DeliveryAssociationConfidence;
+use App\Enums\DeliveryMilestoneType;
+use App\Enums\DeliveryParticipantRole;
+use App\Enums\DeliveryStage;
 use App\Enums\UserRole;
 use App\Mcp\McpAuthenticationResponse;
 use App\Mcp\Servers\FourTechLeadServer;
+use App\Mcp\Tools\KpiGetEvidence;
+use App\Mcp\Tools\KpiGetSummary;
 use App\Mcp\Tools\OneOnOneGetHistory;
+use App\Mcp\Tools\PdiGetOpenActions;
 use App\Mcp\Tools\PeopleGetContext;
 use App\Mcp\Tools\PeopleSearch;
+use App\Models\DeliveryCase;
+use App\Models\DeliveryCaseMilestone;
+use App\Models\DeliveryCaseParticipant;
+use App\Models\DevelopmentPlan;
+use App\Models\DevelopmentPlanItem;
 use App\Models\OneOnOneSession;
 use App\Models\Person;
+use App\Models\Team;
+use App\Models\Tenant;
 use App\Models\User;
 use App\Services\Agent\AgentContextService;
 use Laravel\Passport\ClientRepository;
@@ -48,6 +62,9 @@ it('publishes stable domain tool names and read-only annotations', function () {
     $searchTool = new PeopleSearch(app(AgentContextService::class));
     $peopleTool = new PeopleGetContext(app(AgentContextService::class));
     $historyTool = new OneOnOneGetHistory(app(AgentContextService::class));
+    $pdiTool = new PdiGetOpenActions(app(AgentContextService::class));
+    $kpiTool = new KpiGetSummary(app(AgentContextService::class));
+    $evidenceTool = new KpiGetEvidence(app(AgentContextService::class));
 
     expect($searchTool->toArray())
         ->name->toBe('people.search')
@@ -60,6 +77,163 @@ it('publishes stable domain tool names and read-only annotations', function () {
     expect($historyTool->toArray())
         ->name->toBe('one_on_one.get_history')
         ->annotations->toHaveKey('readOnlyHint', true);
+
+    expect($pdiTool->toArray())
+        ->name->toBe('pdi.get_open_actions')
+        ->annotations->toHaveKey('readOnlyHint', true);
+
+    expect($kpiTool->toArray())
+        ->name->toBe('kpi.get_summary')
+        ->annotations->toHaveKey('readOnlyHint', true);
+
+    expect($evidenceTool->toArray())
+        ->name->toBe('kpi.get_evidence')
+        ->annotations->toHaveKey('readOnlyHint', true);
+});
+
+it('returns normalized KPI evidence without raw webhook payloads through MCP', function () {
+    $tenant = Tenant::factory()->create();
+    $team = Team::factory()->create(['tenant_id' => $tenant->id]);
+    $user = User::factory()->create(['tenant_id' => $tenant->id]);
+    $person = Person::factory()->create(['tenant_id' => $tenant->id, 'team_id' => $team->id]);
+    $deliveryCase = DeliveryCase::factory()->create([
+        'tenant_id' => $tenant->id,
+        'current_stage' => DeliveryStage::Published,
+        'story_points' => 5,
+        'completed_at' => '2026-09-13 12:00:00',
+        'last_activity_at' => '2026-09-13 12:00:00',
+    ]);
+    DeliveryCaseParticipant::factory()->forDeliveryCase($deliveryCase)->create([
+        'person_id' => $person->id,
+        'role' => DeliveryParticipantRole::Implementer,
+        'confidence' => DeliveryAssociationConfidence::High,
+    ]);
+    DeliveryCaseMilestone::factory()->forDeliveryCase($deliveryCase)->create([
+        'milestone_type' => DeliveryMilestoneType::Published,
+        'semantic_key' => 'published:'.$deliveryCase->task_ref,
+        'occurred_at' => '2026-09-13 12:00:00',
+        'metadata' => ['source' => 'normalized'],
+    ]);
+
+    FourTechLeadServer::actingAs($user, 'sanctum')
+        ->tool(KpiGetEvidence::class, [
+            'person_id' => $person->id,
+            'period_start' => '2026-09-13',
+            'period_end' => '2026-09-13',
+            'limit' => 1,
+        ])
+        ->assertOk()
+        ->assertStructuredContent(fn ($json) => $json
+            ->where('data.definition_version', 'delivery-kpis.v1')
+            ->where('data.evidence_count', 1)
+            ->where('data.cases.0.task_ref', $deliveryCase->task_ref)
+            ->where('data.cases.0.participants.0.person_id', $person->id)
+            ->where('data.cases.0.milestones.0.milestone_type', 'published')
+            ->missing('data.cases.0.raw_payload')
+            ->etc());
+});
+
+it('returns tenant and person scoped delivery KPIs through MCP', function () {
+    $tenant = Tenant::factory()->create();
+    $team = Team::factory()->create(['tenant_id' => $tenant->id]);
+    $user = User::factory()->create(['tenant_id' => $tenant->id]);
+    $person = Person::factory()->create(['tenant_id' => $tenant->id, 'team_id' => $team->id]);
+    $deliveryCase = DeliveryCase::factory()->create([
+        'tenant_id' => $tenant->id,
+        'current_stage' => DeliveryStage::Published,
+        'story_points' => 5,
+        'completed_at' => '2026-09-13 12:00:00',
+        'last_activity_at' => '2026-09-13 12:00:00',
+    ]);
+    DeliveryCaseParticipant::factory()->forDeliveryCase($deliveryCase)->create([
+        'person_id' => $person->id,
+        'role' => DeliveryParticipantRole::Implementer,
+        'confidence' => DeliveryAssociationConfidence::High,
+    ]);
+    DeliveryCaseMilestone::factory()->forDeliveryCase($deliveryCase)->create([
+        'milestone_type' => DeliveryMilestoneType::Published,
+        'semantic_key' => 'published:'.$deliveryCase->task_ref,
+        'occurred_at' => '2026-09-13 12:00:00',
+    ]);
+
+    FourTechLeadServer::actingAs($user, 'sanctum')
+        ->tool(KpiGetSummary::class, [
+            'person_id' => $person->id,
+            'period_start' => '2026-09-13',
+            'period_end' => '2026-09-13',
+        ])
+        ->assertOk()
+        ->assertStructuredContent(fn ($json) => $json
+            ->where('data.definition_version', 'delivery-kpis.v1')
+            ->where('data.filters.tenant_id', $tenant->id)
+            ->where('data.filters.person_id', $person->id)
+            ->where('data.published_delivery_count.value', 1)
+            ->where('data.published_story_points.value', 5)
+            ->etc());
+});
+
+it('does not allow members to query delivery KPIs through MCP', function () {
+    $member = User::factory()->member()->create();
+
+    FourTechLeadServer::actingAs($member, 'sanctum')
+        ->tool(KpiGetSummary::class)
+        ->assertHasErrors(['This action is unauthorized.']);
+});
+
+it('returns open PDI actions grouped by active plan through MCP', function () {
+    $user = User::factory()->create();
+    $person = Person::factory()->create();
+    $activePlan = DevelopmentPlan::factory()->create([
+        'person_id' => $person->id,
+        'status' => 'active',
+        'title' => 'PDI autonomia',
+    ]);
+    DevelopmentPlanItem::factory()->create([
+        'development_plan_id' => $activePlan->id,
+        'title' => 'Registrar decisões técnicas',
+        'status' => 'doing',
+    ]);
+    DevelopmentPlanItem::factory()->create([
+        'development_plan_id' => $activePlan->id,
+        'title' => 'Ação concluída',
+        'status' => 'done',
+    ]);
+    $completedPlan = DevelopmentPlan::factory()->create([
+        'person_id' => $person->id,
+        'status' => 'completed',
+    ]);
+    DevelopmentPlanItem::factory()->create([
+        'development_plan_id' => $completedPlan->id,
+        'status' => 'doing',
+    ]);
+
+    FourTechLeadServer::actingAs($user, 'sanctum')
+        ->tool(PdiGetOpenActions::class, ['person_id' => $person->id])
+        ->assertOk()
+        ->assertStructuredContent(fn ($json) => $json
+            ->where('data.person_id', $person->id)
+            ->has('data.plans', 1)
+            ->where('data.plans.0.title', 'PDI autonomia')
+            ->has('data.plans.0.actions', 1)
+            ->where('data.plans.0.actions.0.title', 'Registrar decisões técnicas')
+            ->etc());
+});
+
+it('limits PDI open actions and blocks a member from another person', function () {
+    $ownedPerson = Person::factory()->create();
+    $otherPerson = Person::factory()->create();
+    $plan = DevelopmentPlan::factory()->create(['person_id' => $ownedPerson->id, 'status' => 'active']);
+    DevelopmentPlanItem::factory()->count(2)->create(['development_plan_id' => $plan->id, 'status' => 'todo']);
+    $member = User::factory()->member()->create(['person_id' => $ownedPerson->id]);
+
+    FourTechLeadServer::actingAs($member, 'sanctum')
+        ->tool(PdiGetOpenActions::class, ['person_id' => $ownedPerson->id, 'limit' => 1])
+        ->assertOk()
+        ->assertStructuredContent(fn ($json) => $json->has('data.plans.0.actions', 1));
+
+    FourTechLeadServer::actingAs($member, 'sanctum')
+        ->tool(PdiGetOpenActions::class, ['person_id' => $otherPerson->id])
+        ->assertHasErrors(['This action is unauthorized.']);
 });
 
 it('searches authorized people by partial name through MCP', function () {

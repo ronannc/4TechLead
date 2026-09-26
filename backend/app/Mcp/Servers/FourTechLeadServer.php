@@ -2,7 +2,10 @@
 
 namespace App\Mcp\Servers;
 
+use App\Mcp\Tools\KpiGetEvidence;
+use App\Mcp\Tools\KpiGetSummary;
 use App\Mcp\Tools\OneOnOneGetHistory;
+use App\Mcp\Tools\PdiGetOpenActions;
 use App\Mcp\Tools\PeopleGetContext;
 use App\Mcp\Tools\PeopleSearch;
 use Laravel\Mcp\Server;
@@ -19,6 +22,9 @@ class FourTechLeadServer extends Server
         PeopleSearch::class,
         PeopleGetContext::class,
         OneOnOneGetHistory::class,
+        PdiGetOpenActions::class,
+        KpiGetSummary::class,
+        KpiGetEvidence::class,
     ];
 
     protected array $resources = [
