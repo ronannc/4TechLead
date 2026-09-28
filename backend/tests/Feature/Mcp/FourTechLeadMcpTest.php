@@ -9,10 +9,13 @@ use App\Mcp\McpAuthenticationResponse;
 use App\Mcp\Servers\FourTechLeadServer;
 use App\Mcp\Tools\KpiGetEvidence;
 use App\Mcp\Tools\KpiGetSummary;
+use App\Mcp\Tools\OneOnOneCreateNote;
 use App\Mcp\Tools\OneOnOneGetHistory;
 use App\Mcp\Tools\PdiGetOpenActions;
 use App\Mcp\Tools\PeopleGetContext;
 use App\Mcp\Tools\PeopleSearch;
+use App\Models\AgentApproval;
+use App\Models\AgentToolCall;
 use App\Models\DeliveryCase;
 use App\Models\DeliveryCaseMilestone;
 use App\Models\DeliveryCaseParticipant;
@@ -20,10 +23,13 @@ use App\Models\DevelopmentPlan;
 use App\Models\DevelopmentPlanItem;
 use App\Models\OneOnOneSession;
 use App\Models\Person;
+use App\Models\PersonOneOnOneNote;
 use App\Models\Team;
 use App\Models\Tenant;
 use App\Models\User;
+use App\Services\Agent\AgentApprovalService;
 use App\Services\Agent\AgentContextService;
+use App\Services\Agent\AgentToolAuditService;
 use Laravel\Passport\ClientRepository;
 
 it('exposes the first read-only tools with structured responses', function () {
@@ -65,6 +71,7 @@ it('publishes stable domain tool names and read-only annotations', function () {
     $pdiTool = new PdiGetOpenActions(app(AgentContextService::class));
     $kpiTool = new KpiGetSummary(app(AgentContextService::class));
     $evidenceTool = new KpiGetEvidence(app(AgentContextService::class));
+    $createNoteTool = new OneOnOneCreateNote(app(AgentApprovalService::class), app(AgentToolAuditService::class));
 
     expect($searchTool->toArray())
         ->name->toBe('people.search')
@@ -89,6 +96,95 @@ it('publishes stable domain tool names and read-only annotations', function () {
     expect($evidenceTool->toArray())
         ->name->toBe('kpi.get_evidence')
         ->annotations->toHaveKey('readOnlyHint', true);
+
+    expect($createNoteTool->toArray())
+        ->name->toBe('one_on_one.create_note')
+        ->annotations->not->toHaveKey('readOnlyHint');
+});
+
+it('proposes and commits a 1:1 note only with a matching one-time approval', function () {
+    $user = User::factory()->create();
+    $person = Person::factory()->create(['name' => 'Ada Lovelace']);
+    $arguments = [
+        'mode' => 'proposal',
+        'person_id' => $person->id,
+        'title' => 'Acompanhar autonomia',
+        'body' => 'Revisar decisões técnicas no próximo encontro.',
+        'occurred_at' => '2026-09-26',
+    ];
+
+    $proposal = FourTechLeadServer::actingAs($user, 'sanctum')
+        ->tool(OneOnOneCreateNote::class, $arguments)
+        ->assertOk();
+
+    $approvalId = null;
+    $proposal->assertStructuredContent(function ($json) use (&$approvalId): void {
+        $approvalId = data_get($json->toArray(), 'data.approval_id');
+        $json->etc();
+    });
+
+    expect($approvalId)->toBeString()
+        ->and(PersonOneOnOneNote::query()->count())->toBe(0)
+        ->and(AgentApproval::query()->whereKey($approvalId)->value('status'))->toBe('pending')
+        ->and(AgentToolCall::query()->where('status', 'succeeded')->count())->toBe(1);
+
+    FourTechLeadServer::actingAs($user, 'sanctum')
+        ->tool(OneOnOneCreateNote::class, [
+            ...$arguments,
+            'mode' => 'commit',
+            'approval_id' => $approvalId,
+        ])
+        ->assertOk()
+        ->assertStructuredContent(fn ($json) => $json
+            ->where('data.mode', 'commit')
+            ->where('data.note.title', 'Acompanhar autonomia')
+            ->where('data.note.person_id', $person->id)
+            ->etc());
+
+    expect(PersonOneOnOneNote::query()->count())->toBe(1)
+        ->and(AgentApproval::query()->whereKey($approvalId)->value('status'))->toBe('consumed')
+        ->and(AgentToolCall::query()->where('status', 'succeeded')->count())->toBe(2);
+
+    FourTechLeadServer::actingAs($user, 'sanctum')
+        ->tool(OneOnOneCreateNote::class, [
+            ...$arguments,
+            'mode' => 'commit',
+            'approval_id' => $approvalId,
+        ])
+        ->assertHasErrors(['The approval has already been used.']);
+
+    expect(PersonOneOnOneNote::query()->count())->toBe(1)
+        ->and(AgentToolCall::query()->where('status', 'failed')->count())->toBe(1);
+});
+
+it('rejects a commit when the approved 1:1 note payload changes', function () {
+    $user = User::factory()->create();
+    $person = Person::factory()->create();
+
+    $proposal = FourTechLeadServer::actingAs($user, 'sanctum')
+        ->tool(OneOnOneCreateNote::class, [
+            'mode' => 'proposal',
+            'person_id' => $person->id,
+            'title' => 'Título aprovado',
+        ])
+        ->assertOk();
+    $approvalId = null;
+    $proposal->assertStructuredContent(function ($json) use (&$approvalId): void {
+        $approvalId = data_get($json->toArray(), 'data.approval_id');
+        $json->etc();
+    });
+
+    FourTechLeadServer::actingAs($user, 'sanctum')
+        ->tool(OneOnOneCreateNote::class, [
+            'mode' => 'commit',
+            'person_id' => $person->id,
+            'title' => 'Título alterado',
+            'approval_id' => $approvalId,
+        ])
+        ->assertHasErrors(['The approved payload does not match the requested change.']);
+
+    expect(PersonOneOnOneNote::query()->count())->toBe(0)
+        ->and(AgentApproval::query()->whereKey($approvalId)->value('status'))->toBe('pending');
 });
 
 it('returns normalized KPI evidence without raw webhook payloads through MCP', function () {

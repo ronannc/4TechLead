@@ -4,6 +4,7 @@ namespace App\Mcp\Servers;
 
 use App\Mcp\Tools\KpiGetEvidence;
 use App\Mcp\Tools\KpiGetSummary;
+use App\Mcp\Tools\OneOnOneCreateNote;
 use App\Mcp\Tools\OneOnOneGetHistory;
 use App\Mcp\Tools\PdiGetOpenActions;
 use App\Mcp\Tools\PeopleGetContext;
@@ -22,6 +23,7 @@ class FourTechLeadServer extends Server
         PeopleSearch::class,
         PeopleGetContext::class,
         OneOnOneGetHistory::class,
+        OneOnOneCreateNote::class,
         PdiGetOpenActions::class,
         KpiGetSummary::class,
         KpiGetEvidence::class,
