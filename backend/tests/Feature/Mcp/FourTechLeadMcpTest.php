@@ -6,11 +6,15 @@ use App\Enums\DeliveryParticipantRole;
 use App\Enums\DeliveryStage;
 use App\Enums\UserRole;
 use App\Mcp\McpAuthenticationResponse;
+use App\Mcp\Prompts\PrepareOneOnOneAgenda;
+use App\Mcp\Resources\PersonContextResource;
 use App\Mcp\Servers\FourTechLeadServer;
 use App\Mcp\Tools\KpiGetEvidence;
 use App\Mcp\Tools\KpiGetSummary;
+use App\Mcp\Tools\OneOnOneCreateDraft;
 use App\Mcp\Tools\OneOnOneCreateNote;
 use App\Mcp\Tools\OneOnOneGetHistory;
+use App\Mcp\Tools\PdiCreateDraft;
 use App\Mcp\Tools\PdiGetOpenActions;
 use App\Mcp\Tools\PeopleGetContext;
 use App\Mcp\Tools\PeopleSearch;
@@ -22,6 +26,7 @@ use App\Models\DeliveryCaseParticipant;
 use App\Models\DevelopmentPlan;
 use App\Models\DevelopmentPlanItem;
 use App\Models\OneOnOneSession;
+use App\Models\OneOnOneTemplate;
 use App\Models\Person;
 use App\Models\PersonOneOnOneNote;
 use App\Models\Team;
@@ -72,6 +77,8 @@ it('publishes stable domain tool names and read-only annotations', function () {
     $kpiTool = new KpiGetSummary(app(AgentContextService::class));
     $evidenceTool = new KpiGetEvidence(app(AgentContextService::class));
     $createNoteTool = new OneOnOneCreateNote(app(AgentApprovalService::class), app(AgentToolAuditService::class));
+    $createPdiTool = new PdiCreateDraft(app(AgentApprovalService::class), app(AgentToolAuditService::class));
+    $createDocumentTool = new OneOnOneCreateDraft(app(AgentApprovalService::class), app(AgentToolAuditService::class));
 
     expect($searchTool->toArray())
         ->name->toBe('people.search')
@@ -100,6 +107,115 @@ it('publishes stable domain tool names and read-only annotations', function () {
     expect($createNoteTool->toArray())
         ->name->toBe('one_on_one.create_note')
         ->annotations->not->toHaveKey('readOnlyHint');
+
+    expect($createPdiTool->toArray())
+        ->name->toBe('pdi.create_draft')
+        ->annotations->not->toHaveKey('readOnlyHint');
+
+    expect($createDocumentTool->toArray())
+        ->name->toBe('one_on_one.create_draft')
+        ->annotations->not->toHaveKey('readOnlyHint');
+});
+
+it('registers and reads the authorized person context resource', function () {
+    $user = User::factory()->create();
+    $person = Person::factory()->create(['name' => 'Ada Lovelace']);
+
+    FourTechLeadServer::actingAs($user, 'sanctum')
+        ->resource(PersonContextResource::class, ['person_id' => $person->id])
+        ->assertSee('Ada Lovelace')
+        ->assertDontSee('raw_payload');
+});
+
+it('registers the one-on-one agenda prompt with authorized tool guidance', function () {
+    FourTechLeadServer::prompt(PrepareOneOnOneAgenda::class, [
+        'person_id' => 42,
+        'focus' => 'autonomia',
+    ])
+        ->assertSee('people.get_context')
+        ->assertSee('autonomia')
+        ->assertSee('confirmação explícita');
+});
+
+it('proposes and commits an inactive draft 1:1 document', function () {
+    $user = User::factory()->create();
+    $arguments = [
+        'mode' => 'proposal',
+        'title' => '1:1 mensal de desenvolvimento',
+        'description' => 'Pauta para conversas de desenvolvimento.',
+        'questions' => [
+            'Qual foi o principal avanço desde o último encontro?',
+            'Que apoio você precisa?',
+        ],
+    ];
+
+    $proposal = FourTechLeadServer::actingAs($user, 'sanctum')
+        ->tool(OneOnOneCreateDraft::class, $arguments)
+        ->assertOk();
+    $approvalId = null;
+    $proposal->assertStructuredContent(function ($json) use (&$approvalId): void {
+        $approvalId = data_get($json->toArray(), 'data.approval_id');
+        $json->etc();
+    });
+
+    FourTechLeadServer::actingAs($user, 'sanctum')
+        ->tool(OneOnOneCreateDraft::class, [
+            ...$arguments,
+            'mode' => 'commit',
+            'approval_id' => $approvalId,
+        ])
+        ->assertOk()
+        ->assertStructuredContent(fn ($json) => $json
+            ->where('data.draft.title', '1:1 mensal de desenvolvimento')
+            ->where('data.draft.active', false)
+            ->where('data.draft.is_default', false)
+            ->has('data.draft.questions', 2)
+            ->etc());
+
+    expect(OneOnOneTemplate::query()
+        ->where('title', '1:1 mensal de desenvolvimento')
+        ->value('active'))->toBeFalse();
+});
+
+it('proposes and commits a draft PDI with server-controlled draft fields', function () {
+    $user = User::factory()->create();
+    $person = Person::factory()->create();
+    $arguments = [
+        'mode' => 'proposal',
+        'person_id' => $person->id,
+        'title' => 'PDI autonomia técnica',
+        'summary' => 'Desenvolver autonomia em decisões de arquitetura.',
+        'start_date' => '2026-09-28',
+        'end_date' => '2026-12-20',
+        'target_role' => 'Tech Lead',
+        'target_seniority' => 'senior',
+    ];
+
+    $proposal = FourTechLeadServer::actingAs($user, 'sanctum')
+        ->tool(PdiCreateDraft::class, $arguments)
+        ->assertOk();
+    $approvalId = null;
+    $proposal->assertStructuredContent(function ($json) use (&$approvalId): void {
+        $approvalId = data_get($json->toArray(), 'data.approval_id');
+        $json->etc();
+    });
+
+    FourTechLeadServer::actingAs($user, 'sanctum')
+        ->tool(PdiCreateDraft::class, [
+            ...$arguments,
+            'mode' => 'commit',
+            'approval_id' => $approvalId,
+        ])
+        ->assertOk()
+        ->assertStructuredContent(fn ($json) => $json
+            ->where('data.draft.title', 'PDI autonomia técnica')
+            ->where('data.draft.status', 'draft')
+            ->where('data.draft.progress', 0)
+            ->where('data.draft.person_id', $person->id)
+            ->etc());
+
+    expect(DevelopmentPlan::query()->where('title', 'PDI autonomia técnica')->count())->toBe(1)
+        ->and(DevelopmentPlan::query()->where('title', 'PDI autonomia técnica')->value('status'))->toBe('draft');
 });
 
 it('proposes and commits a 1:1 note only with a matching one-time approval', function () {
@@ -536,7 +652,7 @@ it('completes the MCP initialize handshake for an authenticated client', functio
         ])
         ->assertOk()
         ->assertJsonPath('result.serverInfo.name', 'Four Tech Lead Server')
-        ->assertJsonPath('result.instructions', 'Read-only access to authorized 4TechLead leadership context, 1:1 history and development plans.');
+        ->assertJsonPath('result.instructions', 'Access authorized 4TechLead leadership data through read-only tools, plus proposal/commit tools for approved drafts and notes. Writes require explicit confirmation and a matching approval_id.');
 });
 
 it('propagates the authenticated HTTP guard to MCP tool calls', function () {
