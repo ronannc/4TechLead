@@ -1,0 +1,4 @@
+interface:
+  display_name: "4TechLead PDI"
+  short_description: "Planeja, revisa e atualiza PDIs com dados autorizados."
+  default_prompt: "Use o MCP do 4TechLead para analisar ou preparar um PDI, separando evidências, sugestões e mudanças que exigem aprovação."

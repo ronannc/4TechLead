@@ -3,6 +3,9 @@
 namespace App\Mcp\Servers;
 
 use App\Mcp\Prompts\PrepareOneOnOneAgenda;
+use App\Mcp\Prompts\PreparePdiPlan;
+use App\Mcp\Prompts\PreparePdiUpdate;
+use App\Mcp\Prompts\ReviewPdiProgress;
 use App\Mcp\Resources\PersonContextResource;
 use App\Mcp\Tools\KpiGetEvidence;
 use App\Mcp\Tools\KpiGetSummary;
@@ -45,5 +48,8 @@ class FourTechLeadServer extends Server
 
     protected array $prompts = [
         PrepareOneOnOneAgenda::class,
+        PreparePdiPlan::class,
+        ReviewPdiProgress::class,
+        PreparePdiUpdate::class,
     ];
 }

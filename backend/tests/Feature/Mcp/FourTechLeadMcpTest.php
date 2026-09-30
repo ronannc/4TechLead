@@ -7,6 +7,9 @@ use App\Enums\DeliveryStage;
 use App\Enums\UserRole;
 use App\Mcp\McpAuthenticationResponse;
 use App\Mcp\Prompts\PrepareOneOnOneAgenda;
+use App\Mcp\Prompts\PreparePdiPlan;
+use App\Mcp\Prompts\PreparePdiUpdate;
+use App\Mcp\Prompts\ReviewPdiProgress;
 use App\Mcp\Resources\PersonContextResource;
 use App\Mcp\Servers\FourTechLeadServer;
 use App\Mcp\Tools\KpiGetEvidence;
@@ -147,6 +150,34 @@ it('registers the one-on-one agenda prompt with authorized tool guidance', funct
         ->assertSee('people.get_context')
         ->assertSee('autonomia')
         ->assertSee('confirmação explícita');
+});
+
+it('registers the PDI prompts with separate planning and update guidance', function () {
+    FourTechLeadServer::prompt(PreparePdiPlan::class, [
+        'person_id' => 42,
+        'focus' => 'autonomia técnica',
+        'period_months' => 6,
+    ])
+        ->assertSee('pdi.get_open_actions')
+        ->assertSee('autonomia técnica')
+        ->assertSee('não crie ou altere registros');
+
+    FourTechLeadServer::prompt(ReviewPdiProgress::class, [
+        'person_id' => 42,
+        'focus' => 'evidências',
+    ])
+        ->assertSee('Revise o progresso')
+        ->assertSee('não altere nenhum registro')
+        ->assertSee('evidências');
+
+    FourTechLeadServer::prompt(PreparePdiUpdate::class, [
+        'person_id' => 42,
+        'plan_id' => 7,
+        'requested_changes' => 'Ajustar o prazo da ação de arquitetura.',
+    ])
+        ->assertSee('pdi.update')
+        ->assertSee('approval_id')
+        ->assertSee('Ajustar o prazo da ação de arquitetura.');
 });
 
 it('proposes and commits an inactive draft 1:1 document', function () {
