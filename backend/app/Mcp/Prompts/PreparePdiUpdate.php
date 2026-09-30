@@ -43,7 +43,7 @@ Mudanças solicitadas pelo usuário:
 
 Consulte people.get_context e pdi.get_open_actions para validar o contexto autorizado e identificar ações relacionadas. Use kpi.get_summary e kpi.get_evidence somente se a mudança depender de evidências de delivery.
 
-Apresente: estado atual relevante, mudanças propostas campo a campo, ações que seriam criadas ou atualizadas, justificativa, impacto, riscos e dúvidas. Não execute pdi.update nem pdi.update_action nesta etapa. Depois da revisão do usuário, a escrita deve começar com uma proposta mutável e só pode ser confirmada com approval_id correspondente; qualquer mudança no payload exige nova aprovação.
+        Apresente: estado atual relevante, mudanças propostas campo a campo, ações que seriam criadas, atualizadas ou encerradas, justificativa, impacto, riscos e dúvidas. Não execute pdi.create_action, pdi.update nem pdi.update_action nesta etapa. Depois da revisão do usuário, a escrita deve começar com uma proposta mutável e só pode ser confirmada com approval_id correspondente; qualquer mudança no payload exige nova aprovação.
 PROMPT);
     }
 }

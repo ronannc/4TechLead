@@ -17,6 +17,7 @@ use App\Mcp\Tools\KpiGetSummary;
 use App\Mcp\Tools\OneOnOneCreateDraft;
 use App\Mcp\Tools\OneOnOneCreateNote;
 use App\Mcp\Tools\OneOnOneGetHistory;
+use App\Mcp\Tools\PdiCreateAction;
 use App\Mcp\Tools\PdiCreateDraft;
 use App\Mcp\Tools\PdiGetOpenActions;
 use App\Mcp\Tools\PdiUpdate;
@@ -83,6 +84,7 @@ it('publishes stable domain tool names and read-only annotations', function () {
     $evidenceTool = new KpiGetEvidence(app(AgentContextService::class));
     $createNoteTool = new OneOnOneCreateNote(app(AgentApprovalService::class), app(AgentToolAuditService::class));
     $createPdiTool = new PdiCreateDraft(app(AgentApprovalService::class), app(AgentToolAuditService::class));
+    $createActionTool = new PdiCreateAction(app(AgentApprovalService::class), app(AgentToolAuditService::class));
     $createDocumentTool = new OneOnOneCreateDraft(app(AgentApprovalService::class), app(AgentToolAuditService::class));
     $updatePdiTool = new PdiUpdate(app(AgentApprovalService::class), app(AgentToolAuditService::class));
     $updateActionTool = new PdiUpdateAction(app(AgentApprovalService::class), app(AgentToolAuditService::class));
@@ -117,6 +119,10 @@ it('publishes stable domain tool names and read-only annotations', function () {
 
     expect($createPdiTool->toArray())
         ->name->toBe('pdi.create_draft')
+        ->annotations->not->toHaveKey('readOnlyHint');
+
+    expect($createActionTool->toArray())
+        ->name->toBe('pdi.create_action')
         ->annotations->not->toHaveKey('readOnlyHint');
 
     expect($createDocumentTool->toArray())
@@ -329,6 +335,52 @@ it('updates a PDI and one of its actions through approved MCP commits', function
     expect($plan->fresh()->title)->toBe('PDI atualizado')
         ->and($action->fresh()->status)->toBe('doing')
         ->and($action->fresh()->progress)->toBe(40);
+});
+
+it('creates an action inside an existing PDI through an approved MCP commit', function () {
+    $user = User::factory()->create();
+    $person = Person::factory()->create();
+    $plan = DevelopmentPlan::factory()->create(['person_id' => $person->id, 'status' => 'draft']);
+    $arguments = [
+        'mode' => 'proposal',
+        'plan_id' => $plan->id,
+        'title' => 'Apresentar uma decisão arquitetural',
+        'description' => 'Documentar alternativas, trade-offs e decisão.',
+        'competency' => 'Autonomia técnica',
+        'evidence' => 'Registro da decisão revisado pelo time.',
+        'due_date' => '2026-11-15',
+    ];
+
+    $proposal = FourTechLeadServer::actingAs($user, 'sanctum')
+        ->tool(PdiCreateAction::class, $arguments)
+        ->assertOk();
+    $approvalId = null;
+    $proposal->assertStructuredContent(function ($json) use (&$approvalId, $plan): void {
+        $approvalId = data_get($json->toArray(), 'data.approval_id');
+        $json
+            ->where('data.changes.plan_id', $plan->id)
+            ->where('data.changes.status', 'todo')
+            ->where('data.changes.progress', 0)
+            ->etc();
+    });
+
+    FourTechLeadServer::actingAs($user, 'sanctum')
+        ->tool(PdiCreateAction::class, [
+            ...$arguments,
+            'mode' => 'commit',
+            'approval_id' => $approvalId,
+        ])
+        ->assertOk()
+        ->assertStructuredContent(fn ($json) => $json
+            ->where('data.action.development_plan_id', $plan->id)
+            ->where('data.action.title', 'Apresentar uma decisão arquitetural')
+            ->where('data.action.status', 'todo')
+            ->where('data.action.progress', 0)
+            ->etc());
+
+    expect(DevelopmentPlan::query()->count())->toBe(1)
+        ->and(DevelopmentPlanItem::query()->where('development_plan_id', $plan->id)->count())->toBe(1)
+        ->and(DevelopmentPlanItem::query()->where('title', 'Apresentar uma decisão arquitetural')->value('status'))->toBe('todo');
 });
 
 it('proposes and commits a 1:1 note only with a matching one-time approval', function () {

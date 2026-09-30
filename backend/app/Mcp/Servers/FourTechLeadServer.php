@@ -12,6 +12,7 @@ use App\Mcp\Tools\KpiGetSummary;
 use App\Mcp\Tools\OneOnOneCreateDraft;
 use App\Mcp\Tools\OneOnOneCreateNote;
 use App\Mcp\Tools\OneOnOneGetHistory;
+use App\Mcp\Tools\PdiCreateAction;
 use App\Mcp\Tools\PdiCreateDraft;
 use App\Mcp\Tools\PdiGetOpenActions;
 use App\Mcp\Tools\PdiUpdate;
@@ -36,6 +37,7 @@ class FourTechLeadServer extends Server
         OneOnOneCreateDraft::class,
         PdiGetOpenActions::class,
         PdiCreateDraft::class,
+        PdiCreateAction::class,
         PdiUpdate::class,
         PdiUpdateAction::class,
         KpiGetSummary::class,

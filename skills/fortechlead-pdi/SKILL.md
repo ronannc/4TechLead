@@ -26,6 +26,7 @@ Use esta skill para conduzir o ciclo de desenvolvimento individual no 4TechLead.
 ## Alterações
 
 - Use `pdi.create_draft` para criar um novo PDI.
+- Use `pdi.create_action` para criar uma ação dentro de um PDI existente.
 - Use `pdi.update` para alterar campos do PDI.
 - Use `pdi.update_action` para alterar uma ação existente.
 - A primeira chamada mutável deve ser `mode=proposal`.
