@@ -4,6 +4,7 @@ namespace App\Mcp\Tools;
 
 use App\Mcp\McpAuthenticationResponse;
 use App\Models\DevelopmentPlan;
+use App\Models\DevelopmentPlanItem;
 use App\Models\Person;
 use App\Models\User;
 use App\Services\Agent\AgentApprovalService;
@@ -40,6 +41,12 @@ class PdiCreateDraft extends Tool
             'end_date' => ['sometimes', 'nullable', 'date', 'after_or_equal:start_date'],
             'target_role' => ['sometimes', 'nullable', 'string', 'max:255'],
             'target_seniority' => ['sometimes', 'nullable', 'string', 'max:50'],
+            'actions' => ['sometimes', 'array', 'max:50'],
+            'actions.*.title' => ['required', 'string', 'max:255'],
+            'actions.*.description' => ['sometimes', 'nullable', 'string'],
+            'actions.*.competency' => ['sometimes', 'nullable', 'string', 'max:255'],
+            'actions.*.evidence' => ['sometimes', 'nullable', 'string'],
+            'actions.*.due_date' => ['sometimes', 'nullable', 'date'],
             'approval_id' => ['required_if:mode,commit', 'nullable', 'uuid'],
         ]);
 
@@ -60,6 +67,13 @@ class PdiCreateDraft extends Tool
             'end_date' => $data['end_date'] ?? null,
             'target_role' => $data['target_role'] ?? null,
             'target_seniority' => $data['target_seniority'] ?? null,
+            'actions' => collect($data['actions'] ?? [])->map(fn (array $action): array => [
+                'title' => $action['title'],
+                'description' => $action['description'] ?? null,
+                'competency' => $action['competency'] ?? null,
+                'evidence' => $action['evidence'] ?? null,
+                'due_date' => $action['due_date'] ?? null,
+            ])->values()->all(),
         ];
 
         try {
@@ -89,11 +103,23 @@ class PdiCreateDraft extends Tool
                     );
 
                     $plan = DevelopmentPlan::query()->create([
-                        ...$payload,
+                        ...collect($payload)->except('actions')->all(),
                         'tenant_id' => $user->tenant_id,
                         'status' => 'draft',
                         'progress' => 0,
                     ]);
+
+                    foreach ($payload['actions'] as $action) {
+                        DevelopmentPlanItem::query()->create([
+                            ...$action,
+                            'development_plan_id' => $plan->id,
+                            'tenant_id' => $user->tenant_id,
+                            'status' => 'todo',
+                            'progress' => 0,
+                        ]);
+                    }
+
+                    $plan->load('items');
 
                     return [
                         'mode' => 'commit',
@@ -109,6 +135,16 @@ class PdiCreateDraft extends Tool
                             'target_role' => $plan->target_role,
                             'target_seniority' => $plan->target_seniority,
                             'progress' => $plan->progress,
+                            'actions' => $plan->items->map(fn (DevelopmentPlanItem $action): array => [
+                                'id' => $action->id,
+                                'title' => $action->title,
+                                'description' => $action->description,
+                                'competency' => $action->competency,
+                                'evidence' => $action->evidence,
+                                'status' => $action->status,
+                                'due_date' => $action->due_date?->toDateString(),
+                                'progress' => $action->progress,
+                            ])->values()->all(),
                         ],
                     ];
                 });
@@ -158,6 +194,13 @@ class PdiCreateDraft extends Tool
             'end_date' => $schema->string()->description('Optional target date in YYYY-MM-DD format.')->nullable(),
             'target_role' => $schema->string()->description('Optional target role.')->nullable(),
             'target_seniority' => $schema->string()->description('Optional target seniority.')->nullable(),
+            'actions' => $schema->array()->description('Optional actions to create with the draft PDI.')->items($schema->object([
+                'title' => $schema->string()->required(),
+                'description' => $schema->string()->nullable(),
+                'competency' => $schema->string()->nullable(),
+                'evidence' => $schema->string()->nullable(),
+                'due_date' => $schema->string()->nullable(),
+            ])),
             'approval_id' => $schema->string()->description('Required only for commit, from a matching proposal.')->nullable(),
         ];
     }

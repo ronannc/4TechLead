@@ -16,6 +16,8 @@ use App\Mcp\Tools\OneOnOneCreateNote;
 use App\Mcp\Tools\OneOnOneGetHistory;
 use App\Mcp\Tools\PdiCreateDraft;
 use App\Mcp\Tools\PdiGetOpenActions;
+use App\Mcp\Tools\PdiUpdate;
+use App\Mcp\Tools\PdiUpdateAction;
 use App\Mcp\Tools\PeopleGetContext;
 use App\Mcp\Tools\PeopleSearch;
 use App\Models\AgentApproval;
@@ -79,6 +81,8 @@ it('publishes stable domain tool names and read-only annotations', function () {
     $createNoteTool = new OneOnOneCreateNote(app(AgentApprovalService::class), app(AgentToolAuditService::class));
     $createPdiTool = new PdiCreateDraft(app(AgentApprovalService::class), app(AgentToolAuditService::class));
     $createDocumentTool = new OneOnOneCreateDraft(app(AgentApprovalService::class), app(AgentToolAuditService::class));
+    $updatePdiTool = new PdiUpdate(app(AgentApprovalService::class), app(AgentToolAuditService::class));
+    $updateActionTool = new PdiUpdateAction(app(AgentApprovalService::class), app(AgentToolAuditService::class));
 
     expect($searchTool->toArray())
         ->name->toBe('people.search')
@@ -114,6 +118,14 @@ it('publishes stable domain tool names and read-only annotations', function () {
 
     expect($createDocumentTool->toArray())
         ->name->toBe('one_on_one.create_draft')
+        ->annotations->not->toHaveKey('readOnlyHint');
+
+    expect($updatePdiTool->toArray())
+        ->name->toBe('pdi.update')
+        ->annotations->not->toHaveKey('readOnlyHint');
+
+    expect($updateActionTool->toArray())
+        ->name->toBe('pdi.update_action')
         ->annotations->not->toHaveKey('readOnlyHint');
 });
 
@@ -189,6 +201,14 @@ it('proposes and commits a draft PDI with server-controlled draft fields', funct
         'end_date' => '2026-12-20',
         'target_role' => 'Tech Lead',
         'target_seniority' => 'senior',
+        'actions' => [
+            [
+                'title' => 'Conduzir uma decisão arquitetural',
+                'description' => 'Registrar contexto, alternativas e decisão.',
+                'competency' => 'Autonomia',
+                'due_date' => '2026-10-30',
+            ],
+        ],
     ];
 
     $proposal = FourTechLeadServer::actingAs($user, 'sanctum')
@@ -212,10 +232,72 @@ it('proposes and commits a draft PDI with server-controlled draft fields', funct
             ->where('data.draft.status', 'draft')
             ->where('data.draft.progress', 0)
             ->where('data.draft.person_id', $person->id)
+            ->has('data.draft.actions', 1)
+            ->where('data.draft.actions.0.status', 'todo')
             ->etc());
 
     expect(DevelopmentPlan::query()->where('title', 'PDI autonomia técnica')->count())->toBe(1)
-        ->and(DevelopmentPlan::query()->where('title', 'PDI autonomia técnica')->value('status'))->toBe('draft');
+        ->and(DevelopmentPlan::query()->where('title', 'PDI autonomia técnica')->value('status'))->toBe('draft')
+        ->and(DevelopmentPlanItem::query()->where('title', 'Conduzir uma decisão arquitetural')->count())->toBe(1);
+});
+
+it('updates a PDI and one of its actions through approved MCP commits', function () {
+    $user = User::factory()->create();
+    $person = Person::factory()->create();
+    $plan = DevelopmentPlan::factory()->create(['person_id' => $person->id, 'status' => 'draft']);
+    $action = DevelopmentPlanItem::factory()->create([
+        'development_plan_id' => $plan->id,
+        'status' => 'todo',
+    ]);
+
+    $propose = function (string $tool, array $arguments) use ($user): string {
+        $response = FourTechLeadServer::actingAs($user, 'sanctum')
+            ->tool($tool, ['mode' => 'proposal', ...$arguments])
+            ->assertOk();
+        $approvalId = null;
+        $response->assertStructuredContent(function ($json) use (&$approvalId): void {
+            $approvalId = data_get($json->toArray(), 'data.approval_id');
+            $json->etc();
+        });
+
+        return (string) $approvalId;
+    };
+
+    $planApproval = $propose(PdiUpdate::class, [
+        'plan_id' => $plan->id,
+        'changes' => ['title' => 'PDI atualizado'],
+    ]);
+
+    FourTechLeadServer::actingAs($user, 'sanctum')
+        ->tool(PdiUpdate::class, [
+            'mode' => 'commit',
+            'plan_id' => $plan->id,
+            'changes' => ['title' => 'PDI atualizado'],
+            'approval_id' => $planApproval,
+        ])
+        ->assertOk();
+
+    $actionApproval = $propose(PdiUpdateAction::class, [
+        'action_id' => $action->id,
+        'changes' => ['status' => 'doing', 'progress' => 40],
+    ]);
+
+    FourTechLeadServer::actingAs($user, 'sanctum')
+        ->tool(PdiUpdateAction::class, [
+            'mode' => 'commit',
+            'action_id' => $action->id,
+            'changes' => ['status' => 'doing', 'progress' => 40],
+            'approval_id' => $actionApproval,
+        ])
+        ->assertOk()
+        ->assertStructuredContent(fn ($json) => $json
+            ->where('data.action.status', 'doing')
+            ->where('data.action.progress', 40)
+            ->etc());
+
+    expect($plan->fresh()->title)->toBe('PDI atualizado')
+        ->and($action->fresh()->status)->toBe('doing')
+        ->and($action->fresh()->progress)->toBe(40);
 });
 
 it('proposes and commits a 1:1 note only with a matching one-time approval', function () {

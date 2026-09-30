@@ -11,6 +11,8 @@ use App\Mcp\Tools\OneOnOneCreateNote;
 use App\Mcp\Tools\OneOnOneGetHistory;
 use App\Mcp\Tools\PdiCreateDraft;
 use App\Mcp\Tools\PdiGetOpenActions;
+use App\Mcp\Tools\PdiUpdate;
+use App\Mcp\Tools\PdiUpdateAction;
 use App\Mcp\Tools\PeopleGetContext;
 use App\Mcp\Tools\PeopleSearch;
 use Laravel\Mcp\Server;
@@ -31,6 +33,8 @@ class FourTechLeadServer extends Server
         OneOnOneCreateDraft::class,
         PdiGetOpenActions::class,
         PdiCreateDraft::class,
+        PdiUpdate::class,
+        PdiUpdateAction::class,
         KpiGetSummary::class,
         KpiGetEvidence::class,
     ];
