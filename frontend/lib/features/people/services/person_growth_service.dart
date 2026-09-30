@@ -221,23 +221,25 @@ class PersonGrowthService {
     required int id,
     String? title,
     String? summary,
-    String? status,
     int? progress,
   }) {
     return _put(
       '/development-plans/$id',
-      data: {
-        'title': ?title,
-        'summary': ?summary,
-        'status': ?status,
-        'progress': ?progress,
-      },
+      data: {'title': ?title, 'summary': ?summary, 'progress': ?progress},
     );
   }
 
   Future<void> deleteDevelopmentPlan(int id) async {
     try {
       await _client.dio.delete<void>('/development-plans/$id');
+    } on DioException catch (e) {
+      throw mapDioException(e);
+    }
+  }
+
+  Future<void> deleteDevelopmentPlanItem(int id) async {
+    try {
+      await _client.dio.delete<void>('/development-plan-items/$id');
     } on DioException catch (e) {
       throw mapDioException(e);
     }
@@ -258,6 +260,29 @@ class PersonGrowthService {
         'evidence': ?evidence,
         'status': 'todo',
         'progress': 0,
+      },
+    );
+  }
+
+  Future<Map<String, dynamic>> updateDevelopmentPlanItem({
+    required int id,
+    String? title,
+    String? competency,
+    String? evidence,
+    String? status,
+    int? progress,
+    String? completedAt,
+    bool includeCompletedAt = false,
+  }) {
+    return _put(
+      '/development-plan-items/$id',
+      data: {
+        'title': ?title,
+        'competency': ?competency,
+        'evidence': ?evidence,
+        'status': ?status,
+        'progress': ?progress,
+        if (includeCompletedAt) 'completed_at': completedAt,
       },
     );
   }

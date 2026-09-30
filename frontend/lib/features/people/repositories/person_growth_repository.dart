@@ -179,14 +179,12 @@ class PersonGrowthRepository {
     required int id,
     String? title,
     String? summary,
-    String? status,
     int? progress,
   }) async {
     final json = await _service.updateDevelopmentPlan(
       id: id,
       title: title,
       summary: summary,
-      status: status,
       progress: progress,
     );
     return DevelopmentPlan.fromJson(json['data'] as Map<String, dynamic>);
@@ -194,6 +192,10 @@ class PersonGrowthRepository {
 
   Future<void> deleteDevelopmentPlan(int id) {
     return _service.deleteDevelopmentPlan(id);
+  }
+
+  Future<void> deleteDevelopmentPlanItem(int id) {
+    return _service.deleteDevelopmentPlanItem(id);
   }
 
   Future<DevelopmentPlanItem> createDevelopmentPlanItem({
@@ -207,6 +209,29 @@ class PersonGrowthRepository {
       title: title,
       competency: competency,
       evidence: evidence,
+    );
+    return DevelopmentPlanItem.fromJson(json['data'] as Map<String, dynamic>);
+  }
+
+  Future<DevelopmentPlanItem> updateDevelopmentPlanItem({
+    required int id,
+    String? title,
+    String? competency,
+    String? evidence,
+    String? status,
+    int? progress,
+    String? completedAt,
+    bool includeCompletedAt = false,
+  }) async {
+    final json = await _service.updateDevelopmentPlanItem(
+      id: id,
+      title: title,
+      competency: competency,
+      evidence: evidence,
+      status: status,
+      progress: progress,
+      completedAt: completedAt,
+      includeCompletedAt: includeCompletedAt,
     );
     return DevelopmentPlanItem.fromJson(json['data'] as Map<String, dynamic>);
   }

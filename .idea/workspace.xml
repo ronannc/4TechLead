@@ -4,7 +4,19 @@
     <option name="autoReloadType" value="NONE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="d8e1a0fe-cfa2-4c51-88d0-edc9f875d443" name="Changes" comment="fix(workspace): update task summary and message for KPI tracking" />
+    <list default="true" id="d8e1a0fe-cfa2-4c51-88d0-edc9f875d443" name="Changes" comment="fix: autenticacao mcp">
+      <change beforePath="$PROJECT_DIR$/.idea/ForTechLead.iml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/ForTechLead.iml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/php.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/php.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/tests/Feature/Api/V1/PersonGrowthModuleTest.php" beforeDir="false" afterPath="$PROJECT_DIR$/backend/tests/Feature/Api/V1/PersonGrowthModuleTest.php" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/ios/Podfile" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/ios/Podfile" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/ios/Podfile.lock" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/ios/Podfile.lock" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/ios/Runner.xcodeproj/project.pbxproj" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/ios/Runner.xcodeproj/project.pbxproj" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/lib/features/people/repositories/person_growth_repository.dart" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/lib/features/people/repositories/person_growth_repository.dart" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/lib/features/people/screens/person_detail_body.dart" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/lib/features/people/screens/person_detail_body.dart" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/lib/features/people/services/person_growth_service.dart" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/lib/features/people/services/person_growth_service.dart" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/lib/features/people/viewmodels/person_growth_view_model.dart" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/lib/features/people/viewmodels/person_growth_view_model.dart" afterDir="false" />
+    </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
     <option name="HIGHLIGHT_NON_ACTIVE_CHANGELIST" value="false" />
@@ -23,7 +35,7 @@
     </persistenceIdMap>
   </component>
   <component name="EmbeddingIndexingInfo">
-    <option name="cachedIndexableFilesCount" value="7623" />
+    <option name="cachedIndexableFilesCount" value="7491" />
     <option name="fileBasedEmbeddingIndicesEnabled" value="true" />
   </component>
   <component name="Git.Settings">
@@ -189,6 +201,20 @@
       <path value="$PROJECT_DIR$/backend/vendor/composer" />
       <path value="$PROJECT_DIR$/backend/vendor/aws/aws-crt-php" />
       <path value="$PROJECT_DIR$/backend/vendor/aws/aws-sdk-php" />
+      <path value="$PROJECT_DIR$/backend/vendor/symfony/psr-http-message-bridge" />
+      <path value="$PROJECT_DIR$/backend/vendor/symfony/polyfill-php82" />
+      <path value="$PROJECT_DIR$/backend/vendor/paragonie/constant_time_encoding" />
+      <path value="$PROJECT_DIR$/backend/vendor/paragonie/random_compat" />
+      <path value="$PROJECT_DIR$/backend/vendor/defuse/php-encryption" />
+      <path value="$PROJECT_DIR$/backend/vendor/php-http/discovery" />
+      <path value="$PROJECT_DIR$/backend/vendor/league/event" />
+      <path value="$PROJECT_DIR$/backend/vendor/league/oauth2-server" />
+      <path value="$PROJECT_DIR$/backend/vendor/firebase/php-jwt" />
+      <path value="$PROJECT_DIR$/backend/vendor/psr/http-server-middleware" />
+      <path value="$PROJECT_DIR$/backend/vendor/psr/http-server-handler" />
+      <path value="$PROJECT_DIR$/backend/vendor/phpseclib/phpseclib" />
+      <path value="$PROJECT_DIR$/backend/vendor/laravel/passport" />
+      <path value="$PROJECT_DIR$/backend/vendor/lcobucci/jwt" />
     </include_path>
   </component>
   <component name="ProjectColorInfo">{
@@ -264,6 +290,7 @@
       <workItem from="1790132779889" duration="203000" />
       <workItem from="1790133001375" duration="98000" />
       <workItem from="1790133788780" duration="119000" />
+      <workItem from="1790392060231" duration="2463000" />
     </task>
     <task id="LOCAL-00001" summary="feat(kpis): add task counts for assigned, not published, rejected, and blocked tasks">
       <option name="closed" value="true" />
@@ -281,7 +308,15 @@
       <option name="project" value="LOCAL" />
       <updated>1790133826613</updated>
     </task>
-    <option name="localTasksCounter" value="3" />
+    <task id="LOCAL-00003" summary="fix: autenticacao mcp">
+      <option name="closed" value="true" />
+      <created>1790392111699</created>
+      <option name="number" value="00003" />
+      <option name="presentableId" value="LOCAL-00003" />
+      <option name="project" value="LOCAL" />
+      <updated>1790392111699</updated>
+    </task>
+    <option name="localTasksCounter" value="4" />
     <servers />
   </component>
   <component name="TypeScriptGeneratedFilesManager">
@@ -294,7 +329,8 @@
     </ignored-roots>
     <MESSAGE value="feat(kpis): add task counts for assigned, not published, rejected, and blocked tasks" />
     <MESSAGE value="fix(workspace): update task summary and message for KPI tracking" />
-    <option name="LAST_COMMIT_MESSAGE" value="fix(workspace): update task summary and message for KPI tracking" />
+    <MESSAGE value="fix: autenticacao mcp" />
+    <option name="LAST_COMMIT_MESSAGE" value="" />
   </component>
   <component name="XSLT-Support.FileAssociations.UIState">
     <expand />

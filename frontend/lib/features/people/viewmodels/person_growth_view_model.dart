@@ -155,14 +155,12 @@ class PersonGrowthViewModel extends BaseViewModel {
     required int id,
     String? title,
     String? summary,
-    String? status,
     int? progress,
   }) => _runMutation(() async {
     await _repository.updateDevelopmentPlan(
       id: id,
       title: title,
       summary: summary,
-      status: status,
       progress: progress,
     );
     plans = await _getReadableDevelopmentPlans();
@@ -181,6 +179,56 @@ class PersonGrowthViewModel extends BaseViewModel {
       competency: competency,
       evidence: evidence,
     );
+    plans = await _getReadableDevelopmentPlans();
+    plansLoaded = true;
+  });
+
+  Future<bool> togglePlanItem({
+    required DevelopmentPlan plan,
+    required DevelopmentPlanItem item,
+  }) => _runMutation(() async {
+    final completed = item.progress < 100;
+    await _repository.updateDevelopmentPlanItem(
+      id: item.id,
+      status: completed ? 'done' : 'todo',
+      progress: completed ? 100 : 0,
+      completedAt: completed ? DateTime.now().toIso8601String() : null,
+      includeCompletedAt: true,
+    );
+
+    final totalItems = plan.items.length;
+    final completedItems = plan.items
+        .where(
+          (current) =>
+              current.id == item.id ? completed : current.progress >= 100,
+        )
+        .length;
+    await _repository.updateDevelopmentPlan(
+      id: plan.id,
+      progress: totalItems == 0 ? 0 : (completedItems * 100 ~/ totalItems),
+    );
+    plans = await _getReadableDevelopmentPlans();
+    plansLoaded = true;
+  });
+
+  Future<bool> updatePlanItem({
+    required int id,
+    String? title,
+    String? competency,
+    String? evidence,
+  }) => _runMutation(() async {
+    await _repository.updateDevelopmentPlanItem(
+      id: id,
+      title: title,
+      competency: competency,
+      evidence: evidence,
+    );
+    plans = await _getReadableDevelopmentPlans();
+    plansLoaded = true;
+  });
+
+  Future<bool> deletePlanItem(int id) => _runMutation(() async {
+    await _repository.deleteDevelopmentPlanItem(id);
     plans = await _getReadableDevelopmentPlans();
     plansLoaded = true;
   });

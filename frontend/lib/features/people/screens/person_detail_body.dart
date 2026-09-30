@@ -278,6 +278,12 @@ class _PersonDetailBodyState extends State<PersonDetailBody> {
           }
         },
         onCreateItem: (plan) => _showPlanItemDialog(context, growth, plan),
+        onToggleItem: (plan, item) =>
+            growth.togglePlanItem(plan: plan, item: item),
+        onEditItem: (plan, item) =>
+            _showEditPlanItemDialog(context, growth, plan, item),
+        onDeleteItem: (plan, item) =>
+            _deletePlanItem(context, growth, plan, item),
         onEditPlan: (plan) => _showEditPlanDialog(context, growth, plan),
         onDeletePlan: (plan) => _deletePlan(context, growth, plan),
         onCreatePlan: () => _openFocusedFlow(_FocusedFlow.pdi),
@@ -446,7 +452,6 @@ class _PersonDetailBodyState extends State<PersonDetailBody> {
   ) async {
     final titleController = TextEditingController(text: plan.title);
     final summaryController = TextEditingController(text: plan.summary);
-    final statusController = TextEditingController(text: plan.status);
     final progressController = TextEditingController(text: '${plan.progress}');
 
     await _showEditorSheet(
@@ -471,13 +476,6 @@ class _PersonDetailBodyState extends State<PersonDetailBody> {
           ),
         ),
         TextField(
-          controller: statusController,
-          decoration: const InputDecoration(
-            labelText: 'Status',
-            helperText: 'Use algo simples: active, paused, completed.',
-          ),
-        ),
-        TextField(
           controller: progressController,
           keyboardType: TextInputType.number,
           decoration: const InputDecoration(
@@ -492,7 +490,6 @@ class _PersonDetailBodyState extends State<PersonDetailBody> {
           id: plan.id,
           title: titleController.text.trim(),
           summary: _nullable(summaryController.text),
-          status: statusController.text.trim(),
           progress: int.tryParse(progressController.text.trim()),
         );
         if (sheetContext.mounted) {
@@ -503,8 +500,88 @@ class _PersonDetailBodyState extends State<PersonDetailBody> {
 
     titleController.dispose();
     summaryController.dispose();
-    statusController.dispose();
     progressController.dispose();
+  }
+
+  Future<void> _deletePlanItem(
+    BuildContext context,
+    PersonGrowthViewModel growth,
+    DevelopmentPlan plan,
+    DevelopmentPlanItem item,
+  ) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Excluir ação?'),
+        content: Text('A ação "${item.title}" será removida deste PDI.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Cancelar'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Excluir'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true) {
+      await growth.deletePlanItem(item.id);
+    }
+  }
+
+  Future<void> _showEditPlanItemDialog(
+    BuildContext context,
+    PersonGrowthViewModel growth,
+    DevelopmentPlan plan,
+    DevelopmentPlanItem item,
+  ) async {
+    final titleController = TextEditingController(text: item.title);
+    final competencyController = TextEditingController(text: item.competency);
+    final evidenceController = TextEditingController(text: item.evidence);
+
+    await _showEditorSheet(
+      context: context,
+      title: 'Editar ação',
+      subtitle: 'Atualize a ação e a evidência esperada.',
+      primaryLabel: 'Atualizar ação',
+      children: [
+        TextField(
+          controller: titleController,
+          decoration: const InputDecoration(labelText: 'Ação'),
+        ),
+        TextField(
+          controller: competencyController,
+          decoration: const InputDecoration(labelText: 'Competência'),
+        ),
+        TextField(
+          controller: evidenceController,
+          minLines: 2,
+          maxLines: 4,
+          decoration: const InputDecoration(labelText: 'Evidência esperada'),
+        ),
+      ],
+      onSubmit: (sheetContext) async {
+        if (titleController.text.trim().isEmpty) {
+          return;
+        }
+        await growth.updatePlanItem(
+          id: item.id,
+          title: titleController.text.trim(),
+          competency: _nullable(competencyController.text),
+          evidence: _nullable(evidenceController.text),
+        );
+        if (sheetContext.mounted) {
+          Navigator.pop(sheetContext);
+        }
+      },
+    );
+
+    titleController.dispose();
+    competencyController.dispose();
+    evidenceController.dispose();
   }
 }
 
@@ -998,6 +1075,9 @@ class _PdiTab extends StatelessWidget {
     required this.canManageGrowth,
     required this.onCreatePlan,
     required this.onCreateItem,
+    required this.onToggleItem,
+    required this.onEditItem,
+    required this.onDeleteItem,
     required this.onEditPlan,
     required this.onDeletePlan,
   });
@@ -1008,6 +1088,11 @@ class _PdiTab extends StatelessWidget {
   final bool canManageGrowth;
   final VoidCallback onCreatePlan;
   final ValueChanged<DevelopmentPlan> onCreateItem;
+  final Future<bool> Function(DevelopmentPlan, DevelopmentPlanItem)
+  onToggleItem;
+  final Future<void> Function(DevelopmentPlan, DevelopmentPlanItem) onEditItem;
+  final Future<void> Function(DevelopmentPlan, DevelopmentPlanItem)
+  onDeleteItem;
   final ValueChanged<DevelopmentPlan> onEditPlan;
   final ValueChanged<DevelopmentPlan> onDeletePlan;
 
@@ -1039,6 +1124,9 @@ class _PdiTab extends StatelessWidget {
             plans: growth.plans,
             canManageGrowth: canManageGrowth,
             onCreateItem: onCreateItem,
+            onToggleItem: onToggleItem,
+            onEditItem: onEditItem,
+            onDeleteItem: onDeleteItem,
             onEditPlan: onEditPlan,
             onDeletePlan: onDeletePlan,
           ),
@@ -1168,6 +1256,9 @@ class _PdiTrackingView extends StatelessWidget {
     required this.plans,
     required this.canManageGrowth,
     required this.onCreateItem,
+    required this.onToggleItem,
+    required this.onEditItem,
+    required this.onDeleteItem,
     required this.onEditPlan,
     required this.onDeletePlan,
   });
@@ -1175,6 +1266,11 @@ class _PdiTrackingView extends StatelessWidget {
   final List<DevelopmentPlan> plans;
   final bool canManageGrowth;
   final ValueChanged<DevelopmentPlan> onCreateItem;
+  final Future<bool> Function(DevelopmentPlan, DevelopmentPlanItem)
+  onToggleItem;
+  final Future<void> Function(DevelopmentPlan, DevelopmentPlanItem) onEditItem;
+  final Future<void> Function(DevelopmentPlan, DevelopmentPlanItem)
+  onDeleteItem;
   final ValueChanged<DevelopmentPlan> onEditPlan;
   final ValueChanged<DevelopmentPlan> onDeletePlan;
 
@@ -1202,6 +1298,9 @@ class _PdiTrackingView extends StatelessWidget {
               plan: plan,
               canManageGrowth: canManageGrowth,
               onCreateItem: () => onCreateItem(plan),
+              onToggleItem: (item) => onToggleItem(plan, item),
+              onEditItem: (item) => onEditItem(plan, item),
+              onDeleteItem: (item) => onDeleteItem(plan, item),
               onEditPlan: () => onEditPlan(plan),
               onDeletePlan: () => onDeletePlan(plan),
             ),
@@ -1687,6 +1786,9 @@ class _PlanTile extends StatelessWidget {
     required this.plan,
     required this.canManageGrowth,
     required this.onCreateItem,
+    required this.onToggleItem,
+    required this.onEditItem,
+    required this.onDeleteItem,
     required this.onEditPlan,
     required this.onDeletePlan,
   });
@@ -1694,6 +1796,9 @@ class _PlanTile extends StatelessWidget {
   final DevelopmentPlan plan;
   final bool canManageGrowth;
   final VoidCallback onCreateItem;
+  final Future<bool> Function(DevelopmentPlanItem) onToggleItem;
+  final Future<void> Function(DevelopmentPlanItem) onEditItem;
+  final Future<void> Function(DevelopmentPlanItem) onDeleteItem;
   final VoidCallback onEditPlan;
   final VoidCallback onDeletePlan;
 
@@ -1719,11 +1824,12 @@ class _PlanTile extends StatelessWidget {
           LinearProgressIndicator(value: plan.progress / 100),
           const SizedBox(height: AppSpacing.sm),
           for (final item in plan.items)
-            _TextTile(
-              icon: Icons.check_circle_outline,
-              title: item.title,
-              subtitle:
-                  '${item.status} · ${item.competency ?? 'sem competência'}',
+            _PlanItemTile(
+              item: item,
+              canManageGrowth: canManageGrowth,
+              onToggle: () => onToggleItem(item),
+              onEdit: () => onEditItem(item),
+              onDelete: () => onDeleteItem(item),
             ),
           if (canManageGrowth) ...[
             const SizedBox(height: AppSpacing.sm),
@@ -1753,6 +1859,84 @@ class _PlanTile extends StatelessWidget {
             ),
           ],
         ],
+      ),
+    );
+  }
+}
+
+class _PlanItemTile extends StatelessWidget {
+  const _PlanItemTile({
+    required this.item,
+    required this.canManageGrowth,
+    required this.onToggle,
+    required this.onEdit,
+    required this.onDelete,
+  });
+
+  final DevelopmentPlanItem item;
+  final bool canManageGrowth;
+  final Future<bool> Function() onToggle;
+  final Future<void> Function() onEdit;
+  final Future<void> Function() onDelete;
+
+  @override
+  Widget build(BuildContext context) {
+    final completed = item.progress >= 100;
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: AppSpacing.sm),
+      child: _Surface(
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Icon(
+              completed ? Icons.check_circle : Icons.radio_button_unchecked,
+              color: completed
+                  ? Theme.of(context).colorScheme.primary
+                  : Theme.of(context).colorScheme.onSurfaceVariant,
+            ),
+            const SizedBox(width: AppSpacing.sm),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    item.title,
+                    style: Theme.of(context).textTheme.titleSmall,
+                  ),
+                  if (item.competency != null)
+                    Text(
+                      item.competency!,
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                ],
+              ),
+            ),
+            if (canManageGrowth)
+              Wrap(
+                spacing: AppSpacing.xs,
+                children: [
+                  IconButton(
+                    tooltip: completed ? 'Desfazer conclusão' : 'Concluir ação',
+                    onPressed: onToggle,
+                    icon: Icon(completed ? Icons.undo : Icons.check),
+                  ),
+                  IconButton(
+                    tooltip: 'Editar ação',
+                    onPressed: onEdit,
+                    icon: const Icon(Icons.edit_outlined),
+                  ),
+                  IconButton(
+                    tooltip: 'Excluir ação',
+                    onPressed: onDelete,
+                    icon: const Icon(Icons.delete_outline),
+                  ),
+                ],
+              ),
+          ],
+        ),
       ),
     );
   }

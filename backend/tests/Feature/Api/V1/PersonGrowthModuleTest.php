@@ -104,7 +104,7 @@ it('manages development plans and trackable items', function () {
 
     $planId = $planResponse->json('data.id');
 
-    $this->actingAs(User::factory()->create(), 'sanctum')
+    $itemResponse = $this->actingAs(User::factory()->create(), 'sanctum')
         ->postJson('/api/v1/development-plan-items', [
             'development_plan_id' => $planId,
             'title' => 'Conduzir desenho técnico',
@@ -117,6 +117,17 @@ it('manages development plans and trackable items', function () {
         ])
         ->assertCreated()
         ->assertJsonPath('data.competency', 'Arquitetura');
+
+    $this->actingAs(User::factory()->create(), 'sanctum')
+        ->putJson("/api/v1/development-plan-items/{$itemResponse->json('data.id')}", [
+            'status' => 'done',
+            'progress' => 100,
+            'completed_at' => '2026-09-30',
+        ])
+        ->assertOk()
+        ->assertJsonPath('data.status', 'done')
+        ->assertJsonPath('data.progress', 100)
+        ->assertJsonPath('data.completed_at', '2026-09-30');
 
     $this->actingAs(User::factory()->create(), 'sanctum')
         ->getJson("/api/v1/development-plans?filters[person_id]={$person->id}&search=autonomia")
