@@ -1,0 +1,10 @@
+interface:
+  display_name: "Registrar PDI 4TechLead"
+  short_description: "Registre PDI e ações com segurança"
+  default_prompt: "Use $fortechlead-pdi-registration para validar e registrar este PDI no 4TechLead."
+
+dependencies:
+  tools:
+    - type: "mcp"
+      value: "4techlead"
+      description: "MCP autorizado para consultar e alterar pessoas, PDIs, ações e artefatos relacionados do 4TechLead."

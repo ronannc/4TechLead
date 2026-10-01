@@ -1,0 +1,10 @@
+interface:
+  display_name: "Planejar PDI 4TechLead"
+  short_description: "Conduza entrevista e planeje um PDI"
+  default_prompt: "Use $fortechlead-pdi-interview para conduzir a entrevista e montar o rascunho do PDI."
+
+dependencies:
+  tools:
+    - type: "mcp"
+      value: "4techlead"
+      description: "MCP autorizado para consultas do contexto da pessoa e dos PDIs existentes."
