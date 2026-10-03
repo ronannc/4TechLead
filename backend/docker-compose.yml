@@ -1,6 +1,20 @@
 name: ${COMPOSE_PROJECT_NAME:-fortechlead}
 
 services:
+  frontend:
+    build:
+      context: ./.docker/node
+      args:
+        PNPM_VERSION: ${PNPM_VERSION:-11.19.0}
+    working_dir: /var/www/html
+    volumes:
+      - .:/var/www/html
+      - admin_node_modules:/var/www/html/node_modules
+    ports:
+      - "${VITE_PORT:-5173}:5173"
+    profiles:
+      - admin
+
   app:
     build:
       context: ./.docker/php
@@ -156,6 +170,9 @@ services:
     restart: "no"
     networks:
       - app-network
+
+volumes:
+  admin_node_modules:
 
 networks:
   app-network:

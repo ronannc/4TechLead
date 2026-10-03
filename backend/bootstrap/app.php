@@ -5,6 +5,7 @@ use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
 use Illuminate\Http\Request;
+use App\Http\Middleware\HandleInertiaRequests;
 use Laravel\Passport\Exceptions\AuthenticationException as PassportAuthenticationException;
 
 return Application::configure(basePath: dirname(__DIR__))
@@ -19,7 +20,12 @@ return Application::configure(basePath: dirname(__DIR__))
         $schedule->command('integration-webhooks:prune-payloads')->daily();
     })
     ->withMiddleware(function (Middleware $middleware): void {
-        //
+        $middleware->web(append: [HandleInertiaRequests::class]);
+        $middleware->redirectGuestsTo(
+            fn (Request $request): string => $request->is('admin') || $request->is('admin/*')
+                ? route('admin.login')
+                : route('login'),
+        );
     })
     ->withExceptions(function (Exceptions $exceptions): void {
         $exceptions->render(function (PassportAuthenticationException $exception): mixed {

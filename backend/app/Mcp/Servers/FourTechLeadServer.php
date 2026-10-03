@@ -19,16 +19,20 @@ use App\Mcp\Tools\PdiUpdate;
 use App\Mcp\Tools\PdiUpdateAction;
 use App\Mcp\Tools\PeopleGetContext;
 use App\Mcp\Tools\PeopleSearch;
+use App\Services\Admin\McpPromptConfigurationService;
 use Laravel\Mcp\Server;
-use Laravel\Mcp\Server\Attributes\Instructions;
 use Laravel\Mcp\Server\Attributes\Name;
 use Laravel\Mcp\Server\Attributes\Version;
 
 #[Name('Four Tech Lead Server')]
 #[Version('0.1.0')]
-#[Instructions('Access authorized 4TechLead leadership data through read-only tools, plus proposal/commit tools for approved drafts and notes. Writes require explicit confirmation and a matching approval_id.')]
 class FourTechLeadServer extends Server
 {
+    public function __construct(McpPromptConfigurationService $promptConfigurations)
+    {
+        $this->instructions = $promptConfigurations->resolve('mcp.server.instructions');
+    }
+
     protected array $tools = [
         PeopleSearch::class,
         PeopleGetContext::class,

@@ -2,6 +2,7 @@
 
 namespace App\Mcp\Prompts;
 
+use App\Services\Admin\McpPromptConfigurationService;
 use Laravel\Mcp\Request;
 use Laravel\Mcp\Response;
 use Laravel\Mcp\Server\Prompt;
@@ -9,6 +10,8 @@ use Laravel\Mcp\Server\Prompts\Argument;
 
 class ReviewPdiProgress extends Prompt
 {
+    public function __construct(private readonly McpPromptConfigurationService $promptConfigurations) {}
+
     protected string $name = 'pdi.review_progress';
 
     protected string $title = 'Revisar progresso do PDI';
@@ -35,12 +38,9 @@ class ReviewPdiProgress extends Prompt
 
         $focus = $data['focus'] ?? 'progresso geral';
 
-        return Response::text(<<<PROMPT
-Revise o progresso do PDI da pessoa {$data['person_id']}, com foco em "{$focus}".
-
-Consulte people.get_context e pdi.get_open_actions. Consulte kpi.get_summary e kpi.get_evidence somente quando houver relação com delivery ou quando forem necessárias evidências objetivas de entrega.
-
-Informe: objetivos e ações encontrados, avanços, ações atrasadas ou sem evidência, bloqueios, riscos, recomendações e perguntas para a próxima revisão. Diferencie dados retornados pelo MCP de inferências, não invente progresso e não altere nenhum registro. Se uma alteração parecer necessária, apresente-a apenas como proposta e indique qual ferramenta mutável seria usada depois da confirmação.
-PROMPT);
+        return Response::text($this->promptConfigurations->resolve('pdi.review_progress', [
+            'person_id' => $data['person_id'],
+            'focus' => $focus,
+        ]));
     }
 }

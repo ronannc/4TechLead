@@ -27,3 +27,5 @@ Route::get('/docs/openapi', function () {
         $document
     );
 })->name('docs.openapi');
+
+require __DIR__.'/admin.php';

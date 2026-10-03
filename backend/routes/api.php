@@ -23,6 +23,7 @@ use App\Http\Controllers\Api\V1\PersonGrowthSuggestionController;
 use App\Http\Controllers\Api\V1\PersonInvitationController;
 use App\Http\Controllers\Api\V1\PersonOneOnOneNoteController;
 use App\Http\Controllers\Api\V1\TeamController;
+use App\Http\Middleware\EnsureTenantIsActive;
 use Illuminate\Support\Facades\Route;
 
 Route::prefix('auth')->group(function (): void {
@@ -40,7 +41,7 @@ Route::post('clickup-webhooks', ClickUpWebhookController::class)->middleware('th
 Route::post('github-webhooks', GitHubWebhookController::class)->middleware('throttle:60,1');
 Route::post('notification-webhooks/{integrationSystem}', ExternalNotificationWebhookController::class)->middleware('throttle:60,1');
 
-Route::middleware('auth:sanctum')->group(function (): void {
+Route::middleware(['auth:sanctum', EnsureTenantIsActive::class])->group(function (): void {
     Route::get('me/person', [AuthenticatedPersonController::class, 'show']);
     Route::get('me/development-plans', [AuthenticatedPersonController::class, 'developmentPlans']);
     Route::apiResource('teams', TeamController::class);

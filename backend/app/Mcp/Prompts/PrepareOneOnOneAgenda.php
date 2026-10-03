@@ -2,6 +2,7 @@
 
 namespace App\Mcp\Prompts;
 
+use App\Services\Admin\McpPromptConfigurationService;
 use Laravel\Mcp\Request;
 use Laravel\Mcp\Response;
 use Laravel\Mcp\Server\Prompt;
@@ -9,6 +10,8 @@ use Laravel\Mcp\Server\Prompts\Argument;
 
 class PrepareOneOnOneAgenda extends Prompt
 {
+    public function __construct(private readonly McpPromptConfigurationService $promptConfigurations) {}
+
     protected string $name = 'one_on_one.prepare_agenda';
 
     protected string $title = 'Preparar pauta de 1:1';
@@ -35,16 +38,9 @@ class PrepareOneOnOneAgenda extends Prompt
 
         $focus = $data['focus'] ?? 'desenvolvimento geral';
 
-        return Response::text(<<<PROMPT
-Prepare uma pauta objetiva para o próximo 1:1 da pessoa {$data['person_id']}, com foco em "{$focus}".
-
-Antes de responder, consulte somente estas ferramentas autorizadas do 4TechLead:
-1. people.get_context para o contexto atual;
-2. one_on_one.get_history para o histórico recente;
-3. pdi.get_open_actions para ações abertas de desenvolvimento;
-4. kpi.get_summary e kpi.get_evidence quando o foco envolver delivery.
-
-Estruture a resposta em: contexto observado, tópicos prioritários, perguntas abertas, ações a acompanhar e evidências utilizadas. Não invente fatos, diferencie evidência de sugestão e não crie ou altere registros sem uma confirmação explícita do usuário.
-PROMPT);
+        return Response::text($this->promptConfigurations->resolve('one_on_one.prepare_agenda', [
+            'person_id' => $data['person_id'],
+            'focus' => $focus,
+        ]));
     }
 }

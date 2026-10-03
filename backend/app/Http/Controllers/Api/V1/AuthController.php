@@ -36,7 +36,7 @@ final class AuthController extends Controller
      */
     public function login(LoginRequest $request): JsonResponse
     {
-        $result = app(LoginService::class)->login($request->validated());
+        $result = app(LoginService::class)->login($request->validated(), $request);
 
         return (new UserResource($result['user']))
             ->additional(['token' => $result['token']])
